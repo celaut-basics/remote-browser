@@ -1,14 +1,14 @@
 # What this service needs from a node, and does not have
 
-Three things. One is two lines of kernel configuration, one is a channel that does
-not exist in any form, and one is a distinction the specification language cannot
-currently draw. Everything else in `remote-browser` runs on nodo as it ships,
+Three things. One is two lines of kernel configuration, one is an existing
+mechanism used for something it is not, and one is a distinction the specification
+language cannot currently draw. Everything else in `remote-browser` runs on nodo as it ships,
 which is why they are worth stating precisely rather than as a wish list.
 
 | | what | without it | cost to the node |
 |---|---|---|---|
 | **1** | `CONFIG_INPUT=y` + `CONFIG_INPUT_UINPUT=y` in the guest kernel | the stream is **view-only**: you can watch a browser and not touch it | two symbols, tens of KB of `Image`, on every guest |
-| **2** | a channel from a guest to one Unix socket on the host | there is **no viewer service**: the pixels have to be collected by a program running outside the node | one spec field, one firewall rule the node already writes, one operator switch |
+| **2** | a host↔guest channel that is not a network slot | the display works, over an inbound TCP slot with `socat` reversing the direction on both ends — but the viewer's display channel is then a published service API, which is not what it is | one spec field, one firewall rule the node already writes, one operator switch |
 | **3** | a `Service.Network` a parent passes down without holding | a parent that launches a browser must declare open egress **for itself**, and the manifest stops describing what the instance does | one field, read in one function |
 
 And two things this service deliberately does **not** ask for, listed because the
@@ -86,10 +86,21 @@ plainly; it is not obviously wrong, and it is not what this repository does.
 ## 2. A display channel
 
 The viewer decodes the stream. Something has to put the result on a screen, and
-the screen is on the host of the node the viewer is running on. There is no path
-from a nodo guest to it. Not "an awkward path" — none. It is worth walking through
-the four mechanisms that look like they would work, because each fails for a
-different reason and the reasons are what constrain the fix.
+the screen is on the host of the node the viewer is running on.
+
+**An earlier version of this document said there was no path from a guest to it.
+That was wrong, and it was wrong in an instructive way: every mechanism it
+examined was a way for the guest to *dial out* to the host, and all of those do
+fail. The direction is what has to change, not the mechanism.** A guest cannot
+reach the host; a guest can be reached *by* the host, on an ordinary declared
+slot, which is what every other service on the network already does. The working
+topology is below, under *What works today*, and it needs nothing from the node.
+
+What is left to ask for is smaller and is about modelling rather than capability,
+so the four failures are still worth walking through — they are why the obvious
+direction is closed, and they are what makes the inbound shape the only one.
+
+### Why the guest cannot dial out
 
 **Shared filesystems do not carry sockets.** `SHARED_FILESYSTEMS.md` describes
 `shared`/`guest` xattrs materialised over virtiofs, and `rundev` even hands a guest
@@ -141,7 +152,52 @@ every window, the contents of every screen, the clipboard. Handing that to a VM
 whose job is to render pages from the open web is the opposite of what the VM is
 for. This is the one place in this repository where Wayland is not a preference.
 
+### What works today
+
+`waypipe` proxies the Wayland protocol over any bidirectional byte stream. Its
+roles are fixed and they are the awkward part: `waypipe client` runs where the
+*compositor* is and **listens**; `waypipe server` runs where the *application* is
+and **dials** the client's socket. The application is in the guest, so out of the
+box the guest dials — which is precisely what cannot work.
+
+`socat` reverses it. The viewer declares one more TCP slot; the host connects in,
+either to the published port or through `nodo tunnel <token> <slot> --listen`,
+which needs no port published at all and authenticates with the instance token:
+
+```
+  host (your machine)                        guest (viewer microVM)
+┌────────────────────────────┐             ┌──────────────────────────────┐
+│ your compositor            │             │ moonlight client             │
+│   ▲ unix socket            │             │   │ WAYLAND_DISPLAY          │
+│ waypipe client  (listens)  │             │   ▼                          │
+│   ▲ /tmp/wp-client.sock    │             │ waypipe server   (dials)     │
+│ socat ─────────────────────┼── TCP ──────┼─▶ socat          (listens)   │
+└────────────────────────────┘  declared   └──────────────────────────────┘
+                                  slot
+       host dials in ─────────────────▶   because the guest cannot dial out
+```
+
+Two `socat` processes and four hops of scaffolding, for a channel that is
+conceptually one pipe. It works, and nobody should have to write it.
+
+There is a second cost, and it is the larger one: **waypipe carries decoded
+frames.** The stream arrives at the viewer as H.264, is decoded there, and is then
+shipped to the host as Wayland damage — lz4-compressed, but fundamentally
+uncompressed video. For a 1080p30 window that is hundreds of megabits per second
+across a bridge inside one machine, to deliver pixels that crossed the network
+once already, compressed, and were decoded for no other reason. On a local bridge
+it is survivable. It is not defensible, and it is the honest argument for running
+a Moonlight natively on the host instead — which is what this repository does
+today, and why the viewer ships as a broker.
+
 ### The shape of the fix
+
+What a node-level channel buys is therefore not *capability*. It is two things:
+the scaffolding above disappears, and — the one that matters — **a display stops
+being modelled as a service API.** A slot is a port a service offers to callers.
+A display channel is neither offered nor called: it is one wire to one host. Every
+property that follows from being a slot (published on a host port, reachable from
+the bridge, tunnelled and metered as traffic) is wrong for it.
 
 **Proposal A — a host channel endpoint, which is the smaller ask.**
 
@@ -158,8 +214,11 @@ by the other guests on the bridge. No kernel change, no hypervisor argument, no
 new device.
 
 For a display the operator points it at `waypipe client`'s socket, and the guest
-runs `waypipe server moonlight-qt`. Nothing in the node knows what a display is:
-it opens a channel, and the two ends agree on Wayland without it.
+runs `waypipe server <client>`. Nothing in the node knows what a display is: it
+opens a channel, and the two ends agree on Wayland without it. Note this still has
+the guest dialling out — to a port the node opened for it specifically, which is
+the difference between an address a service was given and one it went looking
+for.
 
 **Proposal B — vsock, which is the cleaner one.**
 
@@ -168,6 +227,12 @@ argument per hypervisor, spliced in where the virtiofs devices already are. It i
 strictly better isolation: a host↔guest channel is not on the network at all, so
 it cannot be confused with egress, cannot be reached from the bridge, and is not
 affected by anything in the host's ruleset.
+
+waypipe speaks vsock natively — `waypipe --vsock -s <port> client` on the host,
+`waypipe --vsock -s 2:<port> server <app>` in the guest, CID 2 being the host —
+and it has since well before the 0.9.2 that Debian trixie ships. So this is the
+version where the scaffolding is not replaced but deleted: no socat, no slot, no
+reversal.
 
 One implementation detail decides how much work it is, and it differs between the
 two backends: QEMU's `vhost-vsock-pci` uses the host kernel's `vhost_vsock`, so
@@ -178,7 +243,13 @@ needs a small shim on the host side. Worth confirming against the version a node
 actually ships before committing to it.
 
 **A goes first.** It needs nothing of every guest, nothing of either hypervisor,
-and reuses a rule the node already writes. B is where this should end up.
+and reuses a rule the node already writes. B is where this should end up, and B is
+the one waypipe already speaks.
+
+**Neither is urgent**, and that is the difference between this requirement and the
+first one. Requirement 1 blocks a working service: without `uinput` the stream
+cannot be touched, and no amount of scaffolding in userspace changes it. This one
+blocks nothing — it replaces a working ugly thing with a working clean one.
 
 ### What the node must enforce, either way
 

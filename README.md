@@ -76,11 +76,22 @@ browser needs the ceiling raised. The *Network* section below is what that costs
 5. Stops the child when it stops. A leaked instance keeps drawing MU from this
    instance's balance, which is the balance paying for the session.
 
-What it does **not** do yet is show you the stream. That needs a display, and a
-nodo guest has no path to one — not a narrow path, none. `NODE-REQUIREMENTS.md`
-walks through the four mechanisms that look like they would work, why each fails,
-and the two ways to fix it. Until then the stream is collected by a Moonlight
-running where there is a screen, and the viewer is what turns that into one
+What it does **not** do yet is show you the stream, and the reason is worth
+getting right because a first version of this README got it wrong. It is not that
+a guest cannot reach a display. It is that it cannot reach one *by dialling out* —
+`*` egress is written on the `FORWARD` hook and the host's own addresses are
+matched on `INPUT`, virtiofs does not carry `AF_UNIX`, and there is no vsock
+device on the VM. Reached the other way round, by the host connecting **in** to a
+declared slot, it works: `waypipe` proxies Wayland over any byte stream, and two
+`socat` processes reverse the direction waypipe's own roles impose. That is real,
+it needs nothing from the node, and `NODE-REQUIREMENTS.md` §2 draws it.
+
+What it costs is the reason it is not wired up here yet: **waypipe carries decoded
+frames.** The stream would arrive at the viewer as H.264, be decoded, and then
+cross a bridge inside your own machine as uncompressed Wayland damage — hundreds
+of megabits per second to deliver pixels that already crossed the network once,
+compressed. So the viewer ships as a broker and the stream is collected by a
+Moonlight running where there is a screen, which is what the viewer turns into one
 command rather than six.
 
 ### What runs inside the child
@@ -193,8 +204,10 @@ the worst case one browser and keeps the accounting per session.
 
 The viewer's disk is larger than a service holding four Python files needs, and
 the reason is stated rather than trimmed: the image also carries the client
-library, and it is sized for the Moonlight that goes in when there is somewhere to
-draw.
+library, and it is sized for the client that would go in with the display path —
+waypipe and socat are both in Debian, but Moonlight is not packaged for Linux
+`arm64` anywhere, so that means building `moonlight-embedded` from a pinned source
+tarball.
 
 ## Network
 

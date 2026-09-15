@@ -4,13 +4,18 @@
 It launches the browser child, holds the credentials that child was given, brokers
 the one pairing step a GameStream client needs, and reports where the session is.
 
-What it does not do, yet, is draw. A viewer that shows you the stream has to reach
-a display, and a nodo guest has no path to one: no DRM in the guest kernel, no
-vsock device on the VM, no host socket that crosses the boundary, and a `*` egress
-grant that is written on the FORWARD hook and so does not reach the host's own
-addresses at all. NODE-REQUIREMENTS.md is what that would take. Until then the
-pixels are collected by a Moonlight running where there is a screen, and
-everything below is what makes that one command instead of six.
+What it does not do, yet, is draw. Not because a guest cannot reach a display --
+it can, over a declared slot with the host connecting in, which is how every other
+service on this network is reached -- but because the only display protocol that
+survives the trip carries decoded frames, and re-shipping uncompressed video
+across a bridge inside one machine to deliver pixels that already crossed the
+network compressed is a thing to do on purpose or not at all.
+
+What a guest genuinely cannot do is dial *out* to a display: `*` egress is written
+on the FORWARD hook and the host's own addresses are matched on INPUT, virtiofs
+does not carry AF_UNIX, and the VM has no vsock device. NODE-REQUIREMENTS.md §2
+has both halves, and everything below is what makes collecting the stream from a
+Moonlight on the host one command instead of six.
 """
 from __future__ import annotations
 
