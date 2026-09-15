@@ -71,6 +71,89 @@ two `socat` processes, the extra slot and the direction reversal all disappear:
 server <client>` in the guest. The redundant decode does not disappear, and it is
 the larger cost, so this changes the plumbing and not the judgement above.
 
+## Two architectures worth considering instead
+
+Both would replace what is here rather than extend it, and both are measured
+against a baseline that is easy to forget: **a native Moonlight on the host.**
+Zero node changes, one decode, and the last hop is already zero-copy because the
+user's own compositor does it. That works today. Anything below has to buy
+something over that.
+
+### A. One service, waypipe, no streaming layer
+
+Drop Moonlight and Sunshine. The service runs Chromium as a plain Wayland client
+of `waypipe server` and declares one waypipe slot;
+[`nodo display`](https://github.com/celaut-project/nodo/issues/367) connects to
+it.
+
+What disappears, all at once: the viewer service, Sunshine, Xvfb, any compositor
+in the guest (waypipe *is* the compositor as far as Chromium is concerned), the
+encoder, `/dev/uinput` and therefore requirement 1 entirely, the PIN pairing, the
+administrator credentials, `possible_environment_workload`, the GameStream port
+offsets, and the parent/child network inheritance. One service, one slot, one
+command.
+
+**Where it stops, and it is specific to browsers.** Damage tracking wins when the
+screen is still, and what one does in a browser is *scroll*, which is full-screen
+damage. So the cost is not low, it is **bursty** — and the bursts land exactly on
+the moments of interaction, which are the moments latency is noticed.
+
+| | damage per frame at 1080p |
+|---|---|
+| still page, cursor blinking | hundreds of bytes |
+| scrolling text | whole screen, but lz4 does well on text (3–5×) → ~2 MB |
+| video, GIF, carousel, CSS animation | the worst case, ~8.3 MB |
+
+H.264 is the mirror image: ~1–2 MB/s constantly. Worse at rest, far better in
+motion.
+
+**And the part that only shows up in the bill.** If the service runs on a peer and
+the channel is tunnelled, `pricing.NET_MU_PER_GIB` meters it. At damage rates that
+is on the order of 360 GB/hour against 3.6 GB/hour for H.264 at 8 Mbps — two
+orders of magnitude. Directly exposed rather than tunnelled it is not metered
+(*"Only what crosses this relay is counted"*), so it depends on the deployment.
+
+**Verdict:** excellent on the same machine or a LAN. Doubtful across a real
+network, which is the case that motivated this service.
+
+### B. Zero-copy on the last hop, via virtio-gpu
+
+The right architecture for the remote case, and what every serious remote-desktop
+client does: decode into a GPU surface the compositor scans out without copying.
+
+**The thing to get right about it:** a parent that shares memory with the host
+does not solve the child's pixels. virtio-gpu shares memory **guest↔host**, never
+guest↔guest, so the child's frames still have to cross a VM boundary and the only
+answer is a compressed stream. Sunshine and Moonlight stay in the design. What
+DRM buys is the *final* hop — which is the expensive one in option A, so this is
+not a small thing; it just is not a replacement for the streaming layer.
+
+**It is not a matter of `architecture`.** That field is CPU ISA and nothing else:
+`ARCH_ALIASES` collapses every spelling into `linux/amd64` or `linux/arm64`, and
+`normalize_arch_tag` returns `None` for anything outside the table. Declaring
+"kernel with DRM" there would break the only vocabulary the scheduler has. It is a
+**capability request** — the same shape as the display channel in
+`NODE-REQUIREMENTS.md` §2 and the grant-only network flag in §3.
+
+**And it is much more than `CONFIG_DRM`.** It needs `CONFIG_DRM_VIRTIO_GPU`, a
+virtio-gpu device per VM on the hypervisor command line, **blob resources**
+(`VIRTIO_GPU_F_RESOURCE_BLOB`) which is the mechanism that actually exports guest
+memory as a host dmabuf, a display backend on the host, and a host-side Wayland
+client importing it through `zwp_linux_dmabuf_v1`. That is roughly what
+`crosvm --gpu` does.
+
+Two structural consequences on top: nodo has **one kernel per architecture**
+(`virtualizers.ch.KERNEL_PATHS`, keyed by arch), so a DRM variant adds a dimension
+to scheduling; and the kernel is **not part of a service's content hash**, so
+"same digest, different kernel" is a determinism question that needs an answer
+before it is a feature.
+
+**One gap neither of these has today:** nothing lets a service declare *"run me on
+the node of whoever asked for me"*. Shares force colocation with a **parent**;
+nothing forces colocation with the **requester**. Option B's parent needs exactly
+that, and currently only gets it by accident, as long as `DELEGATE_EXECUTION`
+happens not to send it away.
+
 ## Not blocked on us
 
 - **Input.** The stream is view-only on an unmodified node: Sunshine injects
