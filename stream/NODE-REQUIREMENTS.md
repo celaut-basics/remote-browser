@@ -68,6 +68,47 @@ service on the network."* Which is the right standard, so:
   Sunshine over the GameStream control stream, so getting at them means patching
   Sunshine again, or running input on a side channel no stock client speaks.
 
+## Pairing, which is a request shape and not a page
+
+Moonlight asks to pair, Sunshine holds the request, and something has to answer it
+with the PIN. Normally that something is a person on the web UI at 47990; here it
+is a `curl`, and the shape below was read off this build rather than off the
+documentation — `2026.914.233613`, `src/confighttp.cpp`, confirmed against a
+running instance.
+
+```bash
+# What is waiting. `pairings` is empty until Moonlight has asked.
+curl -sk -u "$ADMIN_USER:$ADMIN_PASS" https://127.0.0.1:47990/api/pin
+# {"pairings":[]}
+
+# Answer one.
+curl -sk -u "$ADMIN_USER:$ADMIN_PASS" -X POST https://127.0.0.1:47990/api/pin \
+     -H 'Content-Type: application/json' \
+     -d '{"pairing_id":"<32 hex from the GET>","pin":"<4 digits Moonlight showed>","name":"<anything>"}'
+# {"status":true}
+```
+
+Four things this build enforces, each of which returns 400 or 401 rather than
+failing quietly:
+
+- **`pairing_id` is required**, and it is `exactly 32 hexadecimal characters`.
+  TODO.md asked whether this build wants it: it does, and there is no shape
+  without it. It is not invented locally — it comes from the `GET`, which is
+  Moonlight's own pairing request, so the `POST` is an answer and never an
+  opener. A well-formed but unknown id returns `{"status":false}` with HTTP 200,
+  which is the one failure here that is not an error code.
+- **`pin` is exactly 4 digits**, and **`name` is 1–128 bytes**; both are checked.
+- **`Content-Type: application/json` is mandatory** — without it the body is not
+  even parsed: `{"error":"Content type mismatch"}`, 400.
+- **HTTP basic auth**, which is what `ADMIN_USER`/`ADMIN_PASS` seed. No header,
+  401.
+
+There is a CSRF check as well, and it does not apply to this: it requires a token
+only when a request carries an `Origin` or `Referer` that is not allowed. `curl`
+sends neither, and the code says in as many words that a request with neither
+cannot be browser-initiated. A browser pointed at the same endpoint needs the
+token.
+
 ## From the host
 
 - **Moonlight, installed natively.** Not as a celaut service: a native client

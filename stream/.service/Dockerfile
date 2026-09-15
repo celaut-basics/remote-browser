@@ -13,9 +13,23 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # the build stops -- when a version leaves the mirror -- until this file is edited,
 # which is a price paid on purpose.
 #
+# And one of these is not the version packages.debian.org shows, which is the trap
+# in reading the archive rather than the image: pulseaudio is `17.0+dfsg1-2+b1` on
+# arm64 and `17.0+dfsg1-2` on amd64. The `+b1` is a binNMU -- a rebuild of the same
+# source against a changed dependency, given a binary-only version suffix on the
+# architectures it was rebuilt for. `apt-get install pkg=<source version>` fails
+# outright there, so this line is the one that has to be read off the target
+# architecture and cannot be read off the archive at all. Every other pin above is
+# identical on both.
+#
 #  chromium        the browser. Not Chrome: Google ships no Chrome for linux/arm64,
 #                  so on this architecture Chromium is not a substitution, it is the
 #                  only build that exists.
+#  chromium-sandbox the setuid helper that the sandbox actually is. Debian makes it
+#                  a *Recommends* of chromium, and --no-install-recommends is on the
+#                  line below, so leaving it unnamed silently produces an image with
+#                  no sandbox binary in it. Chromium does not fall back: it exits 1
+#                  with "No usable sandbox!" before it opens a window.
 #  xvfb            the X server. There is no display of any kind in a nodo microVM
 #                  (# CONFIG_DRM is not set, # CONFIG_FB is not set in the guest
 #                  kernel), so the framebuffer has to be one the X server allocates
@@ -36,9 +50,10 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         chromium=152.0.7977.82-1~deb13u1 \
+        chromium-sandbox=152.0.7977.82-1~deb13u1 \
         xvfb=2:21.1.16-1.3+deb13u4 \
         x11-utils=7.7+7 \
-        pulseaudio=17.0+dfsg1-2 \
+        pulseaudio=17.0+dfsg1-2+b1 \
         fonts-liberation=1:2.1.5-3 \
         fonts-dejavu-core=2.37-8 \
         fonts-noto-cjk=1:20240730+repack1-1 \
@@ -72,5 +87,9 @@ RUN useradd --create-home --home-dir /home/browser --shell /usr/sbin/nologin bro
     && mkdir -p /var/lib/browser /var/log/browser /run/pulse \
     && chown -R browser:browser /var/lib/browser /home/browser
 
-COPY service /service
+# `./service`, with the dot: the packer rewrites COPY origins beginning with `.`
+# to the `service/` subtree it stages inside the `.service/` build context, and
+# leaves bare relative origins alone. See PACKING.md, and the same line in the
+# other two images.
+COPY ./service /service
 RUN chmod +x /service/entrypoint.sh

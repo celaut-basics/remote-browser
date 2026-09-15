@@ -149,13 +149,22 @@ runs on, so change it to match yours.
 python3 -m unittest discover -s tests -v
 ```
 
-Nine, over all three services, and they check each manifest against its own
-entrypoint — which is the class of bug nothing else would catch. `service.json`
+Eleven, over all three services, and they check each manifest against its own
+entrypoint and its own Dockerfile — which is the class of bug nothing else would
+catch. `service.json`
 declares what a node will accept and which ports it will open; `entrypoint.sh`
 decides what is read and bound; nothing joins the two, so they drift in both
 directions and both are silent. A variable declared and never read is one the
 operator can pass to no effect — `BITRATE_KBPS` was exactly that for a while,
 before anyone noticed GameStream negotiates the bitrate from the client side.
+
+Two of the eleven are about the packer rather than the manifest, and they are there
+because `nodo pack` and `docker build` disagreed: the packer builds with the context
+set to `.service/` and rewrites only the `COPY` origins that begin with a dot, so
+`COPY service /service` meant two different directories depending on who was
+building — and the one that did not exist was the packer's. It failed after the
+entire apt layer had run, on `chmod: cannot access`. The other asserts that some
+`COPY` actually puts a file where `init.entry_path` says it is.
 
 The GameStream family gets a check of its own, because it is the one set of ports
 nobody writes down: Moonlight derives all eight from the `port =` base in the
@@ -177,21 +186,33 @@ asserts the manifest declares each offset from it.
 
 ## Status
 
-Specifications and implementations. **Nothing has been packed or run.**
+**All three build and run.** As of 2026-09-15 each image has been built for
+`linux/arm64` and started, and the things they were written from documentation to do
+have been checked against the running thing rather than the documentation.
+
+Six things were wrong and five of them stopped the service dead — including one that
+broke all three at once: `chromium-sandbox` is a *Recommends*, every image installs
+with `--no-install-recommends`, and Chromium exits 1 rather than running without it.
+The full list, and what was confirmed working, is in [`TODO.md`](TODO.md).
+
+What is confirmed, in one line each:
+
+- **`vnc/`** — works, including the claim the architecture rests on. XTEST input
+  lands with no `/dev/uinput`: keys sent over RFB scroll the page. `-AlwaysShared`
+  really does hold two clients at once.
+- **`waypipe/`** — Chromium runs as a Wayland client on `arm64` through a real
+  channel, no Xwayland. Scrolling was measured rather than estimated, and it is
+  about three times cheaper than this repository guessed; idle is not "hundreds of
+  bytes" but zero.
+- **`stream/`** — Sunshine captures a window-manager-less Xvfb with no black screen,
+  x264 comes up, and the `POST /api/pin` shape is now read off the pinned build
+  instead of its documentation. Two of its `sunshine.conf` keys did not exist.
+
+What still needs a node rather than an image: `nodo pack` through to a service id,
+`nodo tunnel` and the node's DNAT, the eight-tunnel port recipe, and a real
+Moonlight session. Those are the first five items of [`TODO.md`](TODO.md).
 
 Every version, digest and checksum was checked against the Debian archive and the
-GitHub release it names on 2026-09-15 — against `packages.debian.org` rather than
-the source index, which lags behind security uploads and had quietly left this repo
-pinned to a superseded Chromium.
-
-Where to look first when each does not work:
-
-- **`vnc/`** — whether `vncpasswd -f` is in `tigervnc-common` as assumed, and
-  whether `Xvnc` is happy with `-localhost no` behind the node's DNAT.
-- **`waypipe/`** — the `socat` accept order is measured and holds, but nothing has
-  yet driven Chromium through a real waypipe channel. Also: whether Debian's
-  Chromium is built with a working `--ozone-platform=wayland` on `arm64`.
-- **`stream/`** — Sunshine's configuration keys and its `POST /api/pin` shape, both
-  written from documentation; whether its X11 capture is happy with a display no
-  compositor ever touched; and whether a node leaves enough of the port layout
-  intact for the tunnel recipe.
+GitHub release it names on 2026-09-15 — and one of them still had to be read off the
+target architecture instead: `pulseaudio` is `+b1` on `arm64`, a binNMU the source
+index does not show.

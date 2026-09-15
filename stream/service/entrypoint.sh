@@ -15,7 +15,6 @@ fail() { log "FATAL: $*"; exit 1; }
 START_URL="${START_URL:-about:blank}"
 WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
-FPS="${FPS:-30}"
 SW_PRESET="${SW_PRESET:-ultrafast}"
 ADMIN_USER="${ADMIN_USER:-}"
 ADMIN_PASS="${ADMIN_PASS:-}"
@@ -34,8 +33,14 @@ export DISPLAY=:0
 export TZ="$TIMEZONE"
 STATE=/var/lib/browser
 LOGS=/var/log/browser
-mkdir -p "$STATE" "$LOGS" /run/pulse
+mkdir -p "$STATE" "$LOGS" /run/pulse /etc/sunshine
 chown -R browser:browser "$STATE" /run/pulse
+
+# /etc/sunshine is created here because nothing else creates it: the .deb ships
+# /usr/bin/sunshine, a udev rule and a systemd user unit, and no /etc directory at
+# all -- it writes its own config next to its state on first run as a desktop user.
+# Without this the heredoc below fails, and it fails as PID 1 with `set -e`, which
+# is an instance that dies after Xvfb and pulseaudio have already reported healthy.
 
 # --- Input: the one thing this image cannot provide for itself -----------------
 #
@@ -127,9 +132,26 @@ log_path = ${LOGS}/sunshine.log
 credentials_file = ${STATE}/sunshine_creds.json
 file_state = ${STATE}/sunshine_state.json
 file_apps = ${STATE}/apps.json
-fps = [${FPS}]
-resolutions = [${WIDTH}x${HEIGHT}]
 CONF
+
+# `fps` and `resolutions` were here and are gone, because Sunshine says so itself:
+#
+#   Warning: Unrecognized configurable option [resolutions]
+#   Warning: Unrecognized configurable option [fps]
+#
+# on stderr, and then starts normally. They are not keys of this build -- the only
+# `fps` in its config is `minimum_fps_target`, and resolution belongs to the
+# display-device remapping tables, neither of which is what these lines meant.
+#
+# The reason it looked right is the reason it did not matter: GameStream negotiates
+# resolution and frame rate from the CLIENT, the same way it negotiates bitrate,
+# and Moonlight's own settings are what pick them.
+#
+# So FPS is gone from the manifest too, for exactly the reason BITRATE_KBPS went:
+# it had no consumer left once this line was removed. Xvfb has no frame rate -- it
+# is a memory buffer, drawn to when something draws -- so there was nothing else in
+# the image for it to mean. WIDTH and HEIGHT stay: they size that buffer, which is
+# the real ceiling on what any client can ask for.
 
 # One app, and it is the desktop: an entry with no `cmd` streams the X display as
 # it is. The browser is already running on it, and Moonlight launching a second
@@ -147,7 +169,7 @@ log "seeding Sunshine credentials for user '${ADMIN_USER}'"
 sunshine /etc/sunshine/sunshine.conf --creds "$ADMIN_USER" "$ADMIN_PASS" \
   >"$LOGS/creds.log" 2>&1 || fail "sunshine --creds failed (see $LOGS/creds.log)"
 
-log "starting sunshine (encoder=software preset=${SW_PRESET} ${WIDTH}x${HEIGHT}@${FPS})"
+log "starting sunshine (encoder=software preset=${SW_PRESET}, screen ${WIDTH}x${HEIGHT})"
 sunshine /etc/sunshine/sunshine.conf >"$LOGS/sunshine.stdout" 2>&1 &
 SUNSHINE_PID=$!
 
