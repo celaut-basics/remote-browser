@@ -9,6 +9,11 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 
 #  chromium   the browser, and the only process that draws anything. Not Chrome:
 #             Google publishes no Chrome for linux/arm64.
+#  chromium-sandbox
+#             the setuid helper the sandbox actually is. It is a *Recommends* of
+#             chromium and --no-install-recommends is above, so without naming it
+#             the image has no sandbox binary -- and Chromium exits 1 rather than
+#             warning and carrying on.
 #  waypipe    the Wayland proxy. It presents a compositor socket Chromium
 #             connects to, and translates the protocol's file descriptors --
 #             wl_shm pools, the xkb keymap -- into bytes that can cross a kernel
@@ -20,6 +25,7 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         chromium=152.0.7977.82-1~deb13u1 \
+        chromium-sandbox=152.0.7977.82-1~deb13u1 \
         waypipe=0.9.2-1 \
         socat=1.8.0.3-1+deb13u1 \
         fonts-liberation=1:2.1.5-3 \
@@ -36,5 +42,9 @@ RUN useradd --create-home --home-dir /home/browser --shell /usr/sbin/nologin bro
     && chown -R browser:browser /var/lib/browser /var/log/browser /run/waypipe /run/user/1000 \
     && chmod 700 /run/user/1000
 
-COPY service /service
+# `./service`, with the dot: the packer rewrites COPY origins beginning with `.`
+# to the `service/` subtree it stages inside the `.service/` build context, and
+# leaves bare relative origins alone. See PACKING.md, and the same line in the
+# other two images.
+COPY ./service /service
 RUN chmod +x /service/entrypoint.sh
