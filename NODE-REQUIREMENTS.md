@@ -180,6 +180,46 @@ which needs no port published at all and authenticates with the instance token:
 Two `socat` processes and four hops of scaffolding, for a channel that is
 conceptually one pipe. It works, and nobody should have to write it.
 
+#### Why a window appears, which is not obvious
+
+Nothing about a window is transported. A window *is* a sequence of messages on a
+Unix socket: bind `wl_compositor` and `xdg_wm_base`, create a `wl_surface`, wrap
+it in an `xdg_surface` and an `xdg_toplevel`, attach a `wl_buffer`, commit.
+Anything that replays that sequence against a compositor has made a window.
+
+What stops the socket simply being piped is that the protocol passes **file
+descriptors**, as `SCM_RIGHTS` ancillary data — `wl_shm.create_pool(fd, size)`
+for the pixels, `zwp_linux_buffer_params_v1.add(fd)` for a dmabuf,
+`wl_keyboard.keymap(fd, size)` for the xkb keymap the compositor hands back. An
+fd is an index into one process's table in **one kernel**, so copying the bytes
+of the socket across leaves the far side holding a number that means nothing.
+This is the same wall `AF_UNIX` over virtiofs hits, for the same reason.
+
+So waypipe is not a tunnel, it is a translator. In the guest, `waypipe server`
+offers a fake compositor socket that the application connects to. It parses only
+the messages that carry an fd — everything else is forwarded opaque, which is
+what makes it partly forward-compatible with protocols it has never heard of —
+and for a shm pool it mmaps the region, **keeps a private copy**, and on each
+commit sends only the runs that changed since the last sync, lz4 by default.
+
+And on the host, `waypipe client` is an ordinary Wayland client of your
+compositor. It creates a **local** memfd, fills it from the channel, calls
+`wl_shm.create_pool` with that fd of its own, and replays the attach, the damage
+and the commit. The compositor sees a normal local client with a normal toplevel:
+it is in the window list, it honours the output scale, it alt-tabs. **It never
+learns a VM exists.** The trick is not that Wayland was made network transparent;
+it is that a local client is reconstructed on the near side. Input returns the
+same way, `wl_pointer` and `wl_keyboard` events serialised back down the channel,
+with the keymap fd getting the same treatment in reverse.
+
+Which is also where the cost above comes from, stated now with the mechanism in
+view. The guest kernel has `# CONFIG_DRM is not set`, so there is no `/dev/dri`,
+so there is no dmabuf, so every buffer is `wl_shm` and waypipe's own video
+encoding (`--video`, which needs GPU surfaces) is unavailable. What is left is
+diffing and lz4-ing whole 1080p framebuffers thirty times a second. That is
+waypipe doing the best available thing with shm buffers; the problem is one
+decode earlier in the chain.
+
 There is a second cost, and it is the larger one: **waypipe carries decoded
 frames.** The stream arrives at the viewer as H.264, is decoded there, and is then
 shipped to the host as Wayland damage — lz4-compressed, but fundamentally
