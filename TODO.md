@@ -1,102 +1,43 @@
 # TODO
 
-## The display path — deferred on purpose
+## What this repository is for
 
-The viewer can put a real window on your desktop today, with nothing added to the
-node. It is not wired up, and the reason is a judgement rather than a missing
-afternoon: **waypipe carries decoded frames.** The stream would arrive at the
-viewer as H.264, be decoded there, and cross a bridge inside one machine as
-uncompressed Wayland damage — hundreds of megabits per second to deliver pixels
-that already crossed the network once, compressed. A Moonlight running natively
-on the host does the same job with one decode and no second transport, which is
-why the viewer ships as a broker.
+A browser in a microVM is a useful subject for the question *how does a service's
+GUI reach a person*, because it is the **worst case** for one answer and the
+**best case** for another: a browser is a still page most of the time and
+full-screen motion the instant you scroll.
 
-Noted here in full so that whoever picks it up does not have to re-derive it.
-`NODE-REQUIREMENTS.md` §2 has the mechanism, including why a window appears at
-all.
+So this repository carries **three architectures** rather than picking one. They
+differ in one variable — where the pixels are compressed, and by what — and
+everything else follows from it, including whether the thing needs anything from
+the node at all.
 
-### What it would take
+| | works today | input | transport | needs from the node |
+|---|---|---|---|---|
+| **1. waypipe** | **yes** | Wayland, free | damage: ~nothing still, whole framebuffer in motion | [`nodo display`](https://github.com/celaut-project/nodo/issues/367), or three commands by hand |
+| **2. GameStream** | **view only** | ✗ `/dev/uinput` | H.264, ~1–2 MB/s constant | `CONFIG_INPUT` + `CONFIG_INPUT_UINPUT` |
+| **3. VNC** | **yes** | XTEST, free | Tight/ZRLE, between the two | **nothing** |
 
-- **A second slot on the viewer**, TCP, declaring `"protocol": ["waypipe"]` so
-  that a client can find it by what it speaks rather than by a port number the
-  user has to be told. TCP because waypipe's channel is one long-lived
-  bidirectional stream with its own framing and ordering; a celaut UDP slot
-  carries one datagram per beeRPC message and has no connection, which is the
-  wrong shape. Reached either from the published port or — better — through
-  `nodo tunnel <token> <slot> --listen`, which publishes nothing and
-  authenticates with the instance token.
-- **`waypipe` and `socat`** in the viewer image. Both are in Debian trixie
-  (`0.9.2-1` and `1.8.0.3-1+deb13u1`), so both pin like everything else.
-- **One `socat` at each end, to reverse the direction.** waypipe's roles are fixed
-  the wrong way round for this: `client` runs where the compositor is and
-  **listens**, `server` runs where the application is and **dials**. The guest
-  cannot dial the host, so the host dials in and `socat` splices. What listens on
-  the slot is therefore not waypipe.
+Architecture 2 is what `.service/` and `browser/` hold today. 1 and 3 are not
+written yet.
 
-  ```
-  socat TCP-LISTEN:<slot>,reuseaddr UNIX-LISTEN:/run/waypipe.sock
-  ```
+---
 
-  The ordering that falls out of this is favourable, and it was measured rather
-  than assumed: socat accepts on its **first** address and only then creates and
-  accepts on the second, so the slot listens from boot while
-  `/run/waypipe.sock` appears exactly when a session begins. The service waits
-  for that socket and then launches `waypipe server <client>` — which is both the
-  natural shape and the correct one, and it means there is no window in which
-  `waypipe server` can dial a socket that is not there yet. Verified end to end,
-  both directions, with socat 1.8.
-- **A Moonlight client built from source.** This is the unpleasant part.
-  Moonlight is packaged for Linux `arm64` nowhere: not in Debian, and upstream
-  ships only an `x86_64` AppImage (`MoonlightPortable-arm64` is a Windows build).
-  The clean route is `moonlight-embedded` from a source tarball pinned by
-  sha256 — it is C, links SDL2, ffmpeg and opus, all of which are in Debian, and
-  its `sdl` platform decodes in software and renders through SDL2's Wayland
-  backend, which is exactly what waypipe wants.
-- **Revisit the viewer's resources.** It is declared at 256 MB / 1 core
-  `at_init` and 768 MB / 2 cores `at_most`, sized for a broker. Software H.264
-  decode of 1080p30 plus waypipe's diffing is not that, and the numbers in
-  `.service/service.json` and the README table have to move together.
-- **A host-side runbook**, three commands: `waypipe client`, `nodo tunnel`,
-  `socat`. It belongs in the README, not in a script, because it runs on the
-  user's machine and not in any service — and it is exactly the three commands
-  that [celaut-project/nodo#367](https://github.com/celaut-project/nodo/issues/367)
-  proposes collapsing into `nodo display`.
+## 1. Chromium as a plain Wayland client, over waypipe
 
-### What would make most of it unnecessary
+One service. Chromium runs as an ordinary Wayland client of `waypipe server`, and
+[`nodo display`](https://github.com/celaut-project/nodo/issues/367) connects to it
+— or, until that exists, three commands by hand.
 
-`NODE-REQUIREMENTS.md` §2, proposal B — a vsock device on the guest. waypipe
-speaks vsock natively and has since well before the 0.9.2 Debian ships, so the
-two `socat` processes, the extra slot and the direction reversal all disappear:
-`waypipe --vsock -s <port> client` on the host, `waypipe --vsock -s 2:<port>
-server <client>` in the guest. The redundant decode does not disappear, and it is
-the larger cost, so this changes the plumbing and not the judgement above.
-
-## Two architectures worth considering instead
-
-Both would replace what is here rather than extend it, and both are measured
-against a baseline that is easy to forget: **a native Moonlight on the host.**
-Zero node changes, one decode, and the last hop is already zero-copy because the
-user's own compositor does it. That works today. Anything below has to buy
-something over that.
-
-### A. One service, waypipe, no streaming layer
-
-Drop Moonlight and Sunshine. The service runs Chromium as a plain Wayland client
-of `waypipe server` and declares one waypipe slot;
-[`nodo display`](https://github.com/celaut-project/nodo/issues/367) connects to
-it.
-
-What disappears, all at once: the viewer service, Sunshine, Xvfb, any compositor
-in the guest (waypipe *is* the compositor as far as Chromium is concerned), the
-encoder, `/dev/uinput` and therefore requirement 1 entirely, the PIN pairing, the
-administrator credentials, `possible_environment_workload`, the GameStream port
-offsets, and the parent/child network inheritance. One service, one slot, one
-command.
+What is *not* in this architecture, all at once: any X server, any compositor in
+the guest (waypipe **is** the compositor as far as Chromium is concerned), the
+video encoder, `/dev/uinput`, the PIN pairing, the administrator credentials, a
+second service, `possible_environment_workload`, and the GameStream port offsets.
 
 **Where it stops, and it is specific to browsers.** Damage tracking wins when the
 screen is still, and what one does in a browser is *scroll*, which is full-screen
-damage. So the cost is not low, it is **bursty** — and the bursts land exactly on
-the moments of interaction, which are the moments latency is noticed.
+damage. The cost is **bursty**, and the bursts land on the moments of interaction
+— which are the moments latency is noticed.
 
 | | damage per frame at 1080p |
 |---|---|
@@ -104,62 +45,135 @@ the moments of interaction, which are the moments latency is noticed.
 | scrolling text | whole screen, but lz4 does well on text (3–5×) → ~2 MB |
 | video, GIF, carousel, CSS animation | the worst case, ~8.3 MB |
 
-H.264 is the mirror image: ~1–2 MB/s constantly. Worse at rest, far better in
-motion.
+There is no help available for the last row: the guest kernel has
+`# CONFIG_DRM is not set`, so every buffer is `wl_shm`, and waypipe's own
+`--video` is documented as *"Compress specific DMABUF formats using a lossy video
+codec"* — it does not apply.
 
-**And the part that only shows up in the bill.** If the service runs on a peer and
-the channel is tunnelled, `pricing.NET_MU_PER_GIB` meters it. At damage rates that
-is on the order of 360 GB/hour against 3.6 GB/hour for H.264 at 8 Mbps — two
-orders of magnitude. Directly exposed rather than tunnelled it is not metered
+**And the part that only shows up in the bill.** Tunnelled, `pricing.NET_MU_PER_GIB`
+meters this: damage rates run on the order of 360 GB/hour against 3.6 GB/hour for
+H.264 at 8 Mbps. Directly exposed rather than tunnelled it is not metered
 (*"Only what crosses this relay is counted"*), so it depends on the deployment.
 
-**Verdict:** excellent on the same machine or a LAN. Doubtful across a real
-network, which is the case that motivated this service.
+### What it would take
 
-### B. Zero-copy on the last hop, via virtio-gpu
+- `waypipe` and `socat` in the image — both in Debian trixie (`0.9.2-1`,
+  `1.8.0.3-1+deb13u1`), so both pin like everything else.
+- **One TCP slot** declaring `"protocol": ["waypipe"]`, so a client finds it by
+  what it speaks rather than by a port number someone has to be told. TCP because
+  waypipe's channel is one long-lived stream; a celaut UDP slot carries one
+  datagram per beeRPC message and has no connection.
+- **One `socat` at each end, to reverse the direction.** `waypipe client` listens
+  where the compositor is; `waypipe server` dials from where the application is.
+  The guest cannot dial the host, so the host dials in:
 
-The right architecture for the remote case, and what every serious remote-desktop
-client does: decode into a GPU surface the compositor scans out without copying.
+  ```
+  socat TCP-LISTEN:<slot>,reuseaddr UNIX-LISTEN:/run/waypipe.sock
+  ```
 
-**The thing to get right about it:** a parent that shares memory with the host
-does not solve the child's pixels. virtio-gpu shares memory **guest↔host**, never
-guest↔guest, so the child's frames still have to cross a VM boundary and the only
-answer is a compressed stream. Sunshine and Moonlight stay in the design. What
-DRM buys is the *final* hop — which is the expensive one in option A, so this is
-not a small thing; it just is not a replacement for the streaming layer.
+  The ordering that falls out is favourable, and it was measured rather than
+  assumed: socat accepts on its **first** address and only then creates and
+  accepts on the second. So the slot listens from boot while
+  `/run/waypipe.sock` appears exactly when a session begins — the service waits
+  for that socket and then launches `waypipe server chromium`, and there is no
+  window in which it can dial a socket that is not there. Verified end to end,
+  both directions, socat 1.8.
+- A host-side runbook of three commands: `waypipe client`, `nodo tunnel`,
+  `socat` — which is exactly what
+  [nodo#367](https://github.com/celaut-project/nodo/issues/367) proposes
+  collapsing into one.
 
-**It is not a matter of `architecture`.** That field is CPU ISA and nothing else:
-`ARCH_ALIASES` collapses every spelling into `linux/amd64` or `linux/arm64`, and
-`normalize_arch_tag` returns `None` for anything outside the table. Declaring
-"kernel with DRM" there would break the only vocabulary the scheduler has. It is a
-**capability request** — the same shape as the display channel in
-`NODE-REQUIREMENTS.md` §2 and the grant-only network flag in §3.
+---
 
-**And it is much more than `CONFIG_DRM`.** It needs `CONFIG_DRM_VIRTIO_GPU`, a
-virtio-gpu device per VM on the hypervisor command line, **blob resources**
-(`VIRTIO_GPU_F_RESOURCE_BLOB`) which is the mechanism that actually exports guest
-memory as a host dmabuf, a display backend on the host, and a host-side Wayland
-client importing it through `zwp_linux_dmabuf_v1`. That is roughly what
-`crosvm --gpu` does.
+## 2. Xvfb + Sunshine, with a native Moonlight (built today)
 
-Two structural consequences on top: nodo has **one kernel per architecture**
-(`virtualizers.ch.KERNEL_PATHS`, keyed by arch), so a DRM variant adds a dimension
-to scheduling; and the kernel is **not part of a service's content hash**, so
-"same digest, different kernel" is a determinism question that needs an answer
-before it is a feature.
+H.264 is the only one of the three that is cheap across a real network, and
+constant rather than bursty. It is what `.service/` and `browser/` implement.
 
-**One gap neither of these has today:** nothing lets a service declare *"run me on
-the node of whoever asked for me"*. Shares force colocation with a **parent**;
-nothing forces colocation with the **requester**. Option B's parent needs exactly
-that, and currently only gets it by accident, as long as `DELEGATE_EXECUTION`
-happens not to send it away.
+**It is view-only on an unmodified node**, and that is not a detail: Sunshine's
+only input backend is `/dev/uinput`. `XTestFakeKeyEvent` appears nowhere in its
+source, and its packaging ships a udev rule for `/dev/uinput`, which is what a
+hard dependency looks like. The guest kernel is built with
+`# CONFIG_INPUT is not set`. See `NODE-REQUIREMENTS.md` §1 — two symbols.
+
+### Pending here
+
+- **Drop the viewer service.** It exists because the client was going to be a
+  celaut service; a natively installed Moonlight does that job with one decode and
+  a zero-copy last hop from the user's own compositor. With it go `service/child.py`,
+  `service/sunshine.py`, the PIN broker, the generated credentials,
+  `possible_environment_workload`, the port-offset logic and its tests — and the
+  parent/child network inheritance, which stops existing with one service.
+- Pairing then happens the ordinary way: `nodo tunnel` to slot 47990 and
+  Sunshine's own web UI, with the administrator password passed at
+  `nodo execute -e`.
+- Note for anyone tempted to put Moonlight *in* an image: it is packaged for Linux
+  `arm64` nowhere. Not in Debian, and upstream ships only an `x86_64` AppImage
+  (`MoonlightPortable-arm64` is a Windows build). On the **host** it installs
+  normally, which is the whole point of this architecture.
+
+---
+
+## 3. Xvnc and an ordinary VNC viewer
+
+The one that needs nothing from anybody, and the answer that was in plain view the
+whole time: **VNC servers inject input through XTEST** — pure userspace, no kernel
+input subsystem — and have for twenty-five years.
+
+With TigerVNC there is not even an Xvfb: `Xvnc` is the X server and the VNC server
+in one process, so the service is two processes and a slot. Both
+`tigervnc 1.15.0+dfsg-2.1~deb13u1` and `x11vnc 0.9.17-1` are in Debian trixie.
+
+A VNC server **listens**, so it fits a celaut slot natively and `nodo tunnel` plus
+any ordinary viewer already reaches it. Nothing to add to the node, nothing to
+reverse, no command that does not exist yet.
+
+Its encodings (Tight, ZRLE) are built for desktop content, which puts it between
+the other two on purpose: far better than raw damage on a still screen, clearly
+worse than H.264 in motion, latency worse than Moonlight and fine for browsing.
+
+### Pending here
+
+All of it. Nothing of architecture 3 is written.
+
+---
+
+## Considered and dropped
+
+**A guest kernel with virtio-gpu.** Blob resources (`VIRTIO_GPU_F_RESOURCE_BLOB`)
+export guest memory as a host dmabuf, which would make the last hop zero-copy. Its
+only purpose was to let the *client* be a celaut service — and a natively
+installed client already gets a zero-copy last hop from the user's own compositor,
+for free. It would have cost `CONFIG_DRM_VIRTIO_GPU`, a device per VM, a host
+display backend, a dmabuf-importing Wayland client, a second guest kernel per
+architecture (nodo keys `virtualizers.ch.KERNEL_PATHS` by architecture alone) and
+an answer to *same digest, different kernel*, all for a want that turned out not to
+exist.
+
+Two notes kept from working it out, because they are true beyond this repository:
+
+- It would not have been a matter of `architecture`. That field is CPU ISA and
+  nothing else — `ARCH_ALIASES` collapses every spelling into `linux/amd64` or
+  `linux/arm64`, and `normalize_arch_tag` returns `None` for anything outside the
+  table. It would have been a capability request.
+- Nothing lets a service declare *"run me on the node of whoever asked for me"*.
+  Shares force colocation with a **parent**; nothing forces colocation with the
+  **requester**. Any design where a light local service faces the user needs
+  exactly that, and today only gets it by accident, as long as
+  `DELEGATE_EXECUTION` happens not to send it away.
+
+---
 
 ## Not blocked on us
 
-- **Input.** The stream is view-only on an unmodified node: Sunshine injects
-  through `/dev/uinput` and nodo's guest kernel is built with
-  `# CONFIG_INPUT is not set`. `NODE-REQUIREMENTS.md` §1 — two symbols, and the
-  two ways to avoid asking for them, both of which cost a permanent fork.
+- **`uinput`**, for architecture 2 only. `NODE-REQUIREMENTS.md` §1 — two symbols,
+  and the two ways to avoid asking for them, both of which cost a permanent fork.
+  Worth its own issue, and the argument is better without a display in it: the
+  services with the strongest claim on uinput display nothing at all.
+- **`nodo display`**, for architecture 1 only.
+  [nodo#367](https://github.com/celaut-project/nodo/issues/367).
+
+---
 
 ## Verification
 
@@ -171,9 +185,8 @@ each is to be what breaks first:
   with no window manager is not a configuration Sunshine is routinely tested on.
 - **The `sunshine.conf` keys** in `browser/service/entrypoint.sh`, written from
   Sunshine's documentation rather than from a running instance.
-- **The `POST /api/pin` request shape** in `service/sunshine.py`. `pairing_id` is
-  sent only when a caller supplies one, because older Sunshine takes the PIN
-  alone; which of the two this build wants is untested.
-- Whether the node leaves GameStream's port offsets intact on a real launch.
-  `GET /session` reports it, and `Child.offsets_survived` has tests, but neither
-  has met an actual allocator.
+- **The `POST /api/pin` request shape** in `service/sunshine.py` — moot once the
+  viewer goes.
+- Whether the node leaves GameStream's port offsets intact on a real launch —
+  also moot once the viewer goes, since a native Moonlight is told the ports it
+  was given.
