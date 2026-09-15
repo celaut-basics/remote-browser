@@ -1,28 +1,49 @@
 # remote-browser
 
 A web browser that runs on somebody else's machine, inside a microVM, and arrives
-on yours as a video stream — packaged as a [Celaut](https://github.com/celaut-project/nodo)
-service.
+on yours — packaged as [Celaut](https://github.com/celaut-project/nodo) services,
+**three of them**, which are the same browser reached three different ways.
 
-## Three architectures, one question
+## Why three
 
 A browser is a good subject for *how does a service's GUI reach a person*, because
 it is the **worst case** for one answer and the **best case** for another: a still
-page most of the time, and full-screen motion the instant you scroll. So this
-repository is meant to carry three, differing in one variable — where the pixels
-are compressed, and by what.
+page most of the time, and full-screen motion the instant you scroll. Building one
+architecture would have proved whichever point it was built to prove.
 
-| | works today | input | transport | needs from the node |
+They differ in a single variable — **where the pixels are compressed, and by what**
+— and everything else follows from it, including whether the thing needs anything
+from the node at all.
+
+| | input | transport | audio | needs from the node |
 |---|---|---|---|---|
-| **1. waypipe** — Chromium as a plain Wayland client | yes | Wayland, free | damage: ~nothing still, whole framebuffer in motion | [`nodo display`](https://github.com/celaut-project/nodo/issues/367), or three commands by hand |
-| **2. GameStream** — Xvfb + Sunshine, native Moonlight | **view only** | ✗ `/dev/uinput` | H.264, ~1–2 MB/s constant | `CONFIG_INPUT` + `CONFIG_INPUT_UINPUT` |
-| **3. VNC** — `Xvnc`, an ordinary VNC viewer | yes | XTEST, free | Tight/ZRLE, between the two | nothing |
+| [**`vnc/`**](vnc/NODE-REQUIREMENTS.md) — `Xvnc`, any VNC viewer | XTEST | RFB Tight/ZRLE | ✗ | **nothing** |
+| [**`waypipe/`**](waypipe/NODE-REQUIREMENTS.md) — Chromium as a Wayland client | Wayland | damage + lz4 | ✗ | [`nodo display`](https://github.com/celaut-project/nodo/issues/367), or three commands |
+| [**`stream/`**](stream/NODE-REQUIREMENTS.md) — Xvfb + Sunshine, native Moonlight | `/dev/uinput` | H.264 | ✓ | `CONFIG_INPUT` + `CONFIG_INPUT_UINPUT`, **or it is view-only** |
 
-**`stream/` is architecture 2, and it is the only one written.** It is the one
-that is cheap across a real network, and the only one that is not usable on an
-unmodified node — see *Why you cannot touch it yet*. `TODO.md` has the other two.
+Read as a table it says something none of them says alone. The only one that needs
+a **capability** from the node needs it for *input*, not for pixels. The only one
+with **audio** is the only one that carries a real media protocol. And the one that
+asks for nothing at all is the oldest technology of the three.
 
-## Why this exists
+### Which to run
+
+- **On your own machine or a LAN:** `waypipe/`. It has no encoder, no X server and
+  no compositor — Chromium's compositor is the one on your desktop — and the cost
+  is proportional to how much of the screen changes, which on a still page is
+  nearly nothing.
+- **Across a real network:** `stream/`. H.264 is ~1–2 MB/s whether the page is
+  still or playing video, and it is the only one of the three that does not care
+  what is on screen. It is also the only one you cannot yet *touch* on an
+  unmodified node.
+- **When you want it to work now, anywhere, with a client you already have:**
+  `vnc/`. Its encodings sit between the other two by design, and it needs nothing
+  from anybody.
+
+Each directory has its own `NODE-REQUIREMENTS.md` with what it wants from the node,
+what it wants from your host, and the commands to connect.
+
+## Why this exists at all
 
 A browser is the largest attack surface most people run, and the one program they
 point at code they have never read, several hundred times a day. The usual answers
@@ -36,22 +57,18 @@ isolation is a property of a specification anyone can read, whose engine and fla
 and fonts are fixed by a content hash, and which can be handed to a machine with
 cores to spare.
 
-The stream is GameStream — [Sunshine](https://github.com/LizardByte/Sunshine)
-inside the service, [Moonlight](https://moonlight-stream.org) installed natively on
-your own machine — because it was built for interactive latency rather than
-playback. **The client is not a celaut service and should not be**: a native
-Moonlight decodes once and hands the frame to your own compositor with no copy,
-which is the best possible last hop and costs nothing to arrange.
+## What is inside each
 
-## What runs inside
+| | `vnc/` | `waypipe/` | `stream/` |
+|---|---|---|---|
+| browser | Chromium `152.0.7977.82` | Chromium | Chromium |
+| display server | `Xvnc` (is also the RFB server) | **none** — waypipe is the compositor | `Xvfb` |
+| encoder | RFB's own | **none** | Sunshine + x264 |
+| audio | — | — | PulseAudio null sink |
+| processes | 2 | 2 | 4 |
 
-| | | why this one |
-|---|---|---|
-| **Chromium** `150.0.7871.181` | the browser | Google publishes no Chrome for `linux/arm64`. On this architecture Chromium is not a substitution, it is the only build that exists. |
-| **Xvfb** `21.1.16` | the display | The guest kernel has `# CONFIG_DRM is not set` and `# CONFIG_FB is not set`, so the framebuffer has to be one an X server allocates in ordinary memory. Xvfb also needs no VT, which is switched off too. |
-| **Sunshine** `2026.914.233613` | capture, encode, protocol | `capture = x11`, and that is forced: Sunshine's Wayland capture is built on `wlr-export-dmabuf`, a dmabuf needs a DRM device, and KMS capture needs the same one. XShm is shared memory and no device, which makes it the only one of the three paths that runs on this kernel. |
-| **x264** via Sunshine | the encoder | `celaut.Sysresources` has no accelerator field. A service cannot ask a node for a GPU, so an encoder that needs one cannot be scheduled anywhere on this network. |
-| **PulseAudio** `17.0` | a sound card that does not exist | `# CONFIG_SOUND is not set`, but `module-null-sink` opens no device — it is arithmetic on a buffer — and its monitor is a capture source as far as the encoder cares. The only part of this service that needed nothing from the node. |
+Not Chrome, in all three: Google publishes no Chrome for `linux/arm64`, so on this
+architecture Chromium is not a substitution, it is the only build that exists.
 
 Chromium runs as an unprivileged user with its own sandbox on, rather than as root
 with `--no-sandbox`. The guest kernel has `CONFIG_USER_NS=y` and
@@ -59,102 +76,43 @@ with `--no-sandbox`. The guest kernel has `CONFIG_USER_NS=y` and
 one service on the network whose job is to open pages nobody vetted. The microVM
 is the boundary that matters; it is not a reason to drop the one inside it.
 
-## Why you cannot touch it yet
+## What a GPU-less guest costs, which all three pay
 
-**On an unmodified node this shows you a browser and does not let you touch it.**
+`celaut.Sysresources` is `blkio_weight`, `cpu_period`, `cpu_quota`, `mem_limit`
+and `disk_space`. There is no accelerator field, so no service on this network can
+ask a node for one — and the guest kernel has `# CONFIG_DRM is not set`, so there
+is no `/dev/dri` even to fall back from.
 
-Sunshine injects mouse and keyboard through `/dev/uinput`, and nodo's guest kernel
-is built with `# CONFIG_INPUT is not set` — switched off, per its own comment,
-because a microVM has "no terminal, keyboard or physical NIC", which is true of
-hardware and not of uinput. `XTestFakeKeyEvent` appears nowhere in Sunshine's
-source and its packaging ships a udev rule for `/dev/uinput`, so there is no
-second path to fall back to.
+Chromium therefore rasterises every frame in software in all three. On the four
+cores `at_most` asks for, the honest target is **1080p30** — text, mail, documents
+and code review are fine, and video and WebGL are where the absence of a GPU stops
+being an abstraction. `stream/` pays a second software cost on top, x264 on every
+frame, which is what `SW_PRESET` trades against latency.
 
-Two symbols, `CONFIG_INPUT=y` and `CONFIG_INPUT_UINPUT=y`; `NODE-REQUIREMENTS.md`
-§1 makes the case, including the two ways to avoid asking, both of which cost a
-permanent fork. Architecture 3 is the one that needs none of this.
-
-## What it costs to encode on a CPU
-
-Two software costs stack: Chromium rasterises every frame without a GPU, and x264
-encodes every frame after it. On the four cores `at_most` asks for, at `ultrafast`
-with `zerolatency`, the honest target is **1080p30** or **720p60** — not 1080p60,
-and not 4K at any rate. Text, mail, documents, code review are fine. Video and
-WebGL are where the absence of a GPU stops being an abstraction.
-
-`SW_PRESET` is the knob: `ultrafast` by default because latency is what is being
-bought; `veryfast` gives visibly better quality per bit and wants roughly double
-the cores.
-
-## Connecting to it
-
-GameStream does not discover a host's ports. It **derives** them: one base, and
-fixed offsets — `47989` for HTTP, base−5 for HTTPS, base+21 for RTSP, base+9 and
-up for the four datagram flows. Nodo publishes each declared slot on a port taken
-independently from `network.FREE_PORTS_RANGE`, so the offsets between them are
-whatever its allocator had free, and a Moonlight pointed at the published HTTP
-port computes four wrong ports for everything else.
-
-Rebuild the family locally instead, one tunnel per slot, each pinned to the port
-Moonlight expects:
-
-```bash
-for p in 47989 47984 47990 48010; do nodo tunnel <instance> $p --listen $p & done
-for p in 47998 47999 48000 48002; do nodo tunnel <instance> $p --listen $p --udp & done
-```
-
-Then point Moonlight at `127.0.0.1`, take the PIN it shows you, and enter it in
-Sunshine's web UI on `https://127.0.0.1:47990` with the credentials you launched
-with.
-
-**One honest caveat about the UDP tunnels.** `TUNNELING.md` is explicit that
-datagrams through the tunnel become reliable and can head-of-line block, which for
-a video stream is precisely the property UDP was chosen to get. Against a node on
-your own machine that is a non-issue — there is no real link to lose packets on.
-Against a remote node it is a real cost, and the alternative is direct exposure,
-which gives back the offsets problem. That tension is not resolved here.
-
-## The environment it reads
-
-| variable | | what it is |
-|---|---|---|
-| `ADMIN_USER` / `ADMIN_PASS` | **required** | Sunshine's configuration API. The service refuses to start without them rather than generating one: an unset password leaves port 47990 open to every other guest on the bridge, and a generated one would have to be read back out of the serial log. |
-| `START_URL` | `about:blank` | The page the session opens on. |
-| `WIDTH` / `HEIGHT` | `1920` / `1080` | Both must be even — H.264 chroma subsampling. |
-| `FPS` | `30` | See *What it costs to encode on a CPU* before raising it. |
-| `SW_PRESET` | `ultrafast` | An x264 preset. The latency/quality/cores knob. |
-| `LOCALE` | `en-US` | Chromium's `--lang`. |
-| `TIMEZONE` | `UTC` | The container's `TZ`. A browser reports it, so the default is the private choice and setting it is the convenient one. |
-
-## Resources and network
-
-| | `at_init` | `at_most` |
-|---|---|---|
-| memory | 2 GB | 6 GB |
-| disk | 6 GB | 12 GB |
-| CPU | 2 cores | 4 cores |
+## Network
 
 ```json
 "network": [{ "tags": ["*"] }]
 ```
 
-Open egress is the honest form of "this is a browser". The narrower alternative is
-not narrower in the way it looks: nodo resolves a domain tag to that domain's A
-records **on ports 80 and 443 only**, at launch, once. A list of domains would be
-a list of the sites you had thought of, pinned to the addresses they had that
-afternoon — a worse description of what a browser does than the wildcard, and one
-that would fail in a way nobody could read.
+The same in all three, and it is the honest form of "this is a browser". The
+narrower alternative is not narrower in the way it looks: nodo resolves a domain
+tag to that domain's A records **on ports 80 and 443 only**, at launch, once. A
+list of domains would be a list of the sites you had thought of, pinned to the
+addresses they had that afternoon — a worse description of what a browser does
+than the wildcard, and one that would fail in a way nobody could read.
 
 An operator can refuse it: `service_networks.blacklist: ["*"]` refuses every
 service declaring any tagged network. The declaration exists so the refusal can be
 made before the launch rather than discovered from a packet capture after it.
 
-> Worth a footnote, because it cost a bug. When this was two services, the parent
-> declared `"network": []` and the child `["*"]` — and `Service.Network` is
-> authorized by intersection with the ancestor chain, so the child was granted
-> nothing, silently, with the launch reporting success. One service has no chain
-> and the problem stops existing. The general fix is
-> [celaut-project/nodo#365](https://github.com/celaut-project/nodo/pull/365).
+> Worth a footnote, because it cost a bug. An earlier two-service design had the
+> parent declare `"network": []` and the child `["*"]` — and `Service.Network` is
+> authorised by intersection with the ancestor chain, so the child was granted
+> nothing, silently, with the launch reporting success. Three single services have
+> no chain and the problem stops existing. The general fix is
+> [celaut-project/nodo#365](https://github.com/celaut-project/nodo/pull/365), and
+> the gap it does not close is in `NODE-REQUIREMENTS.md`.
 
 ## Reproducibility, and what it can mean here
 
@@ -163,25 +121,27 @@ is the clearest case on this network where that cannot mean what it usually mean
 The output is a session: it depends on what you click, on what the sites answered,
 on the minute it ran.
 
-What content-addressing buys here is the *environment*, and that is not a
-consolation prize: the base image by digest and every Debian package by its exact
-version, so a security update cannot silently change which browser you ran; and
+What content-addressing buys is the *environment*, and that is not a consolation
+prize: the base image by digest and every Debian package by its exact version, so
+a security update cannot silently change which browser you ran; and, in `stream/`,
 Sunshine by version **and by the sha256 GitHub publishes for that asset** — it is
 not in Debian, so it arrives over the network at build time, which makes it exactly
 the input that has to be nailed down.
 
 Two people running the same digest ran the same Chromium, with the same flags, the
-same fonts, the same encoder and the same preset. They did not see the same pixels,
-and were never going to.
+same fonts and the same encoder. They did not see the same pixels, and were never
+going to.
 
 ## Pack
 
 ```bash
-nodo pack stream
+nodo pack vnc        # needs nothing from the node
+nodo pack waypipe    # needs nodo display, or three commands by hand
+nodo pack stream     # view-only until the guest kernel has uinput
 ```
 
-`architecture` is `linux/arm64`. The packer builds for the host it runs on, so
-change it to match yours.
+`architecture` is `linux/arm64` in all three. The packer builds for the host it
+runs on, so change it to match yours.
 
 ## Tests
 
@@ -189,17 +149,22 @@ change it to match yours.
 python3 -m unittest discover -s tests -v
 ```
 
-Five, and they check the manifest against the entrypoint — which is the only class
-of bug left that nothing else would catch. `service.json` declares what a node will
-accept at `nodo execute -e`; `entrypoint.sh` decides what it reads; nothing joins
-the two, so they drift in both directions and both are silent. A variable declared
-and never read is one the operator can pass to no effect — `BITRATE_KBPS` was
-exactly that for a while, before anyone noticed GameStream negotiates the bitrate
-from the client side.
+Nine, over all three services, and they check each manifest against its own
+entrypoint — which is the class of bug nothing else would catch. `service.json`
+declares what a node will accept and which ports it will open; `entrypoint.sh`
+decides what is read and bound; nothing joins the two, so they drift in both
+directions and both are silent. A variable declared and never read is one the
+operator can pass to no effect — `BITRATE_KBPS` was exactly that for a while,
+before anyone noticed GameStream negotiates the bitrate from the client side.
+
+The GameStream family gets a check of its own, because it is the one set of ports
+nobody writes down: Moonlight derives all eight from the `port =` base in the
+generated `sunshine.conf`, so the test reads that base out of the entrypoint and
+asserts the manifest declares each offset from it.
 
 ## What this is not
 
-- **Not anonymity.** Your traffic leaves the node running this service, with that
+- **Not anonymity.** Your traffic leaves the node running the service, with that
   node's address. If the balancer delegated it to a peer, it leaves from the peer
   — browsing on someone else's connection is a thing to decide deliberately, not
   to discover.
@@ -212,11 +177,21 @@ from the client side.
 
 ## Status
 
-Specification and implementation, neither packed nor run.
+Specifications and implementations. **Nothing has been packed or run.**
 
-Every version, digest and checksum in the Dockerfile was checked against the
-Debian archive and the GitHub release it names, on 2026-09-15. Three things are
-written from documentation rather than from a running system, and are where to
-look first when it does not work: Sunshine's configuration keys, whether its X11
-capture is happy with a display no compositor ever touched, and whether a node
-leaves enough of the port layout intact for the tunnel recipe above.
+Every version, digest and checksum was checked against the Debian archive and the
+GitHub release it names on 2026-09-15 — against `packages.debian.org` rather than
+the source index, which lags behind security uploads and had quietly left this repo
+pinned to a superseded Chromium.
+
+Where to look first when each does not work:
+
+- **`vnc/`** — whether `vncpasswd -f` is in `tigervnc-common` as assumed, and
+  whether `Xvnc` is happy with `-localhost no` behind the node's DNAT.
+- **`waypipe/`** — the `socat` accept order is measured and holds, but nothing has
+  yet driven Chromium through a real waypipe channel. Also: whether Debian's
+  Chromium is built with a working `--ozone-platform=wayland` on `arm64`.
+- **`stream/`** — Sunshine's configuration keys and its `POST /api/pin` shape, both
+  written from documentation; whether its X11 capture is happy with a display no
+  compositor ever touched; and whether a node leaves enough of the port layout
+  intact for the tunnel recipe.

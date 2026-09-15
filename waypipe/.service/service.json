@@ -1,0 +1,48 @@
+{
+    "tag": "remote-browser-waypipe",
+    "architecture": "linux/arm64",
+    "init": {
+        "entry_path": [
+            "service",
+            "entrypoint.sh"
+        ]
+    },
+    "api": [
+        {
+            "port": 8081,
+            "transport": "tcp",
+            "protocol": [
+                "waypipe"
+            ]
+        }
+    ],
+    "envs": [
+        "START_URL",
+        "WIDTH",
+        "HEIGHT",
+        "LOCALE",
+        "TIMEZONE"
+    ],
+    "network": [
+        {
+            "tags": [
+                "*"
+            ],
+            "prose": "This service is a web browser. The destinations are chosen by whoever is driving it, one link at a time, and cannot be enumerated in a specification written before the session starts. A narrower declaration would be a false one: nodo resolves a domain tag to its A records on ports 80 and 443 only, which is neither the whole web nor a stable set."
+        }
+    ],
+    "resources": {
+        "at_init": {
+            "mem_limit": 2147483648,
+            "disk_space": 4294967296,
+            "cpu_period": 100000,
+            "cpu_quota": 200000
+        },
+        "at_most": {
+            "mem_limit": 5368709120,
+            "disk_space": 8589934592,
+            "cpu_period": 100000,
+            "cpu_quota": 400000
+        }
+    }
+}

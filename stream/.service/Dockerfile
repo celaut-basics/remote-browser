@@ -35,8 +35,8 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 #  curl            fetches the Sunshine package below, and nothing at runtime.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-        chromium=150.0.7871.181-1~deb13u1 \
-        xvfb=2:21.1.16-1.3+deb13u3 \
+        chromium=152.0.7977.82-1~deb13u1 \
+        xvfb=2:21.1.16-1.3+deb13u4 \
         x11-utils=7.7+7 \
         pulseaudio=17.0+dfsg1-2 \
         fonts-liberation=1:2.1.5-3 \
