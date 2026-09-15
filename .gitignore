@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+__services__/
+__metadata__/
+__block__/
+.dependencies
+*.celaut.bee

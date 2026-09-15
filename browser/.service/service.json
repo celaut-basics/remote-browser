@@ -1,0 +1,104 @@
+{
+    "tag": "remote-browser-engine",
+    "architecture": "linux/arm64",
+    "init": {
+        "entry_path": [
+            "service",
+            "entrypoint.sh"
+        ]
+    },
+    "api": [
+        {
+            "port": 47989,
+            "transport": "tcp",
+            "protocol": [
+                "http",
+                "gamestream"
+            ]
+        },
+        {
+            "port": 47984,
+            "transport": "tcp",
+            "protocol": [
+                "https",
+                "gamestream"
+            ]
+        },
+        {
+            "port": 47990,
+            "transport": "tcp",
+            "protocol": [
+                "https",
+                "rest"
+            ]
+        },
+        {
+            "port": 48010,
+            "transport": "tcp",
+            "protocol": [
+                "rtsp"
+            ]
+        },
+        {
+            "port": 47998,
+            "transport": "udp",
+            "protocol": [
+                "rtp"
+            ]
+        },
+        {
+            "port": 47999,
+            "transport": "udp",
+            "protocol": [
+                "enet"
+            ]
+        },
+        {
+            "port": 48000,
+            "transport": "udp",
+            "protocol": [
+                "rtp"
+            ]
+        },
+        {
+            "port": 48002,
+            "transport": "udp",
+            "protocol": [
+                "rtp"
+            ]
+        }
+    ],
+    "envs": [
+        "START_URL",
+        "WIDTH",
+        "HEIGHT",
+        "FPS",
+        "SW_PRESET",
+        "ADMIN_USER",
+        "ADMIN_PASS",
+        "LOCALE",
+        "TIMEZONE"
+    ],
+    "network": [
+        {
+            "tags": [
+                "*"
+            ],
+            "prose": "This service is a web browser. The destinations are chosen by whoever is driving it, one link at a time, and cannot be enumerated in a specification written before the session starts. A narrower declaration would be a false one: nodo resolves a domain tag to its A records on ports 80 and 443 only, which is neither the whole web nor a stable set. The honest statement is open egress, and it is written here so that a node operator reads it before admitting the launch rather than after."
+        }
+    ],
+    "resources": {
+        "at_init": {
+            "mem_limit": 2147483648,
+            "disk_space": 6442450944,
+            "cpu_period": 100000,
+            "cpu_quota": 200000
+        },
+        "at_most": {
+            "mem_limit": 6442450944,
+            "disk_space": 12884901888,
+            "cpu_period": 100000,
+            "cpu_quota": 400000
+        }
+    }
+}
