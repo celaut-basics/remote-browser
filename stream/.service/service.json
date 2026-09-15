@@ -1,5 +1,5 @@
 {
-    "tag": "remote-browser-engine",
+    "tag": "remote-browser",
     "architecture": "linux/arm64",
     "init": {
         "entry_path": [

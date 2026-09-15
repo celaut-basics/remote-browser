@@ -8,7 +8,7 @@ which is why they are worth stating precisely rather than as a wish list.
 | | what | without it | cost to the node |
 |---|---|---|---|
 | **1** | `CONFIG_INPUT=y` + `CONFIG_INPUT_UINPUT=y` in the guest kernel | the stream is **view-only**: you can watch a browser and not touch it | two symbols, tens of KB of `Image`, on every guest |
-| **2** | a host↔guest channel that is not a network slot | the display works, over an inbound TCP slot with `socat` reversing the direction on both ends — but the viewer's display channel is then a published service API, which is not what it is | one spec field, one firewall rule the node already writes, one operator switch |
+| **2** | a host↔guest channel that is not a network slot | architecture 1 works, over an inbound TCP slot with `socat` reversing the direction on both ends — but a display channel is then a published service API, which is not what it is | one spec field, one firewall rule the node already writes, one operator switch |
 | **3** | a `Service.Network` a parent passes down without holding | a parent that launches a browser must declare open egress **for itself**, and the manifest stops describing what the instance does | one field, read in one function |
 
 And two things this service deliberately does **not** ask for, listed because the
@@ -85,8 +85,13 @@ plainly; it is not obviously wrong, and it is not what this repository does.
 
 ## 2. A display channel
 
-The viewer decodes the stream. Something has to put the result on a screen, and
-the screen is on the host of the node the viewer is running on.
+A service renders something. Something has to put it on a screen, and the screen
+is on the host of the node, not in the guest.
+
+This is what **architecture 1** rests on — Chromium as a plain Wayland client,
+with no encoder and no X server. It is not needed by architecture 2, which sends
+compressed video to a natively installed client, nor by architecture 3, whose
+server listens on an ordinary slot.
 
 **An earlier version of this document said there was no path from a guest to it.
 That was wrong, and it was wrong in an instructive way: every mechanism it
@@ -160,12 +165,12 @@ roles are fixed and they are the awkward part: `waypipe client` runs where the
 and **dials** the client's socket. The application is in the guest, so out of the
 box the guest dials — which is precisely what cannot work.
 
-`socat` reverses it. The viewer declares one more TCP slot; the host connects in,
+`socat` reverses it. The service declares a TCP slot; the host connects in,
 either to the published port or through `nodo tunnel <token> <slot> --listen`,
 which needs no port published at all and authenticates with the instance token:
 
 ```
-  host (your machine)                        guest (viewer microVM)
+  host (your machine)                        guest (the service's microVM)
 ┌────────────────────────────┐             ┌──────────────────────────────┐
 │ your compositor            │             │ moonlight client             │
 │   ▲ unix socket            │             │   │ WAYLAND_DISPLAY          │
@@ -220,15 +225,20 @@ diffing and lz4-ing whole 1080p framebuffers thirty times a second. That is
 waypipe doing the best available thing with shm buffers; the problem is one
 decode earlier in the chain.
 
-There is a second cost, and it is the larger one: **waypipe carries decoded
-frames.** The stream arrives at the viewer as H.264, is decoded there, and is then
-shipped to the host as Wayland damage — lz4-compressed, but fundamentally
-uncompressed video. For a 1080p30 window that is hundreds of megabits per second
-across a bridge inside one machine, to deliver pixels that crossed the network
-once already, compressed, and were decoded for no other reason. On a local bridge
-it is survivable. It is not defensible, and it is the honest argument for running
-a Moonlight natively on the host instead — which is what this repository does
-today, and why the viewer ships as a broker.
+There is a second cost, and what it applies to is worth being exact about, because
+an earlier version of this document got it wrong. **waypipe carries damage, not
+video.** The guest kernel has no DRM, so every buffer is `wl_shm` and waypipe's
+own `--video` (*"Compress specific DMABUF formats using a lossy video codec"*)
+does not apply. So the cost is proportional to how much of the screen changes:
+~nothing on a still page, and a whole 1080p framebuffer — 8.3 MB — on a frame
+where everything moves.
+
+That is fine for most GUI programs and awkward for a browser specifically, since
+scrolling is full-screen damage and scrolling is what one does in a browser. It is
+catastrophic for the thing this document originally proposed: decoding an H.264
+stream inside a guest and re-shipping the result as damage, which is video 100% of
+the time and had already been compressed once. That design is gone; see
+`TODO.md`.
 
 ### The shape of the fix
 
@@ -322,12 +332,16 @@ once, and only one of them is wanted here:
 - it **grants** the domain to everything this instance launches, and
 - it **takes** the domain for this instance's own VM.
 
-There is no way to write the first without the second. So the viewer in this
-repository, whose job is to hold a password and answer three HTTP routes, declares
-`["*"]` — and the node duly writes `allow_all_egress_rule` for it. The manifest,
-which is the thing an operator reads before admitting a launch, now says the
-control plane of the session may reach the entire internet. It may. It does not.
-Nothing in the specification can tell those apart.
+There is no way to write the first without the second. This repository ran into
+it head on while it was two services: a light parent whose job was to hold a
+password and answer three HTTP routes had to declare `["*"]`, because its child
+was a browser — and the node duly wrote `allow_all_egress_rule` for the parent
+too. The manifest, which is the thing an operator reads before admitting a launch,
+said the control plane of the session might reach the entire internet. It might.
+It did not. Nothing in the specification could tell those apart.
+
+That design is gone, which removes the instance and not the problem: it is what
+happens to **every** orchestrator with a child that talks to the world.
 
 This is not a corner case of one service. It is what happens to **every**
 orchestrator with a child that talks to the world, which is most of them: the

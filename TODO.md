@@ -18,7 +18,7 @@ the node at all.
 | **2. GameStream** | **view only** | ✗ `/dev/uinput` | H.264, ~1–2 MB/s constant | `CONFIG_INPUT` + `CONFIG_INPUT_UINPUT` |
 | **3. VNC** | **yes** | XTEST, free | Tight/ZRLE, between the two | **nothing** |
 
-Architecture 2 is what `.service/` and `browser/` hold today. 1 and 3 are not
+Architecture 2 is what `stream/` holds today. 1 and 3 are not
 written yet.
 
 ---
@@ -88,7 +88,7 @@ H.264 at 8 Mbps. Directly exposed rather than tunnelled it is not metered
 ## 2. Xvfb + Sunshine, with a native Moonlight (built today)
 
 H.264 is the only one of the three that is cheap across a real network, and
-constant rather than bursty. It is what `.service/` and `browser/` implement.
+constant rather than bursty. It is what `stream/` implements.
 
 **It is view-only on an unmodified node**, and that is not a detail: Sunshine's
 only input backend is `/dev/uinput`. `XTestFakeKeyEvent` appears nowhere in its
@@ -96,17 +96,23 @@ source, and its packaging ships a udev rule for `/dev/uinput`, which is what a
 hard dependency looks like. The guest kernel is built with
 `# CONFIG_INPUT is not set`. See `NODE-REQUIREMENTS.md` §1 — two symbols.
 
+The viewer service is **gone**, and with it `child.py`, `sunshine.py`, the PIN
+broker, the generated credentials, `possible_environment_workload` and the
+parent/child network inheritance. Pairing now happens the ordinary way: `nodo
+tunnel` to slot 47990 and Sunshine's own web UI, with the administrator password
+passed at `nodo execute -e`.
+
 ### Pending here
 
-- **Drop the viewer service.** It exists because the client was going to be a
-  celaut service; a natively installed Moonlight does that job with one decode and
-  a zero-copy last hop from the user's own compositor. With it go `service/child.py`,
-  `service/sunshine.py`, the PIN broker, the generated credentials,
-  `possible_environment_workload`, the port-offset logic and its tests — and the
-  parent/child network inheritance, which stops existing with one service.
-- Pairing then happens the ordinary way: `nodo tunnel` to slot 47990 and
-  Sunshine's own web UI, with the administrator password passed at
-  `nodo execute -e`.
+- **The port layout, which got harder rather than easier.** The viewer solved it
+  by being a sibling on the same bridge and dialling the child's guest IP at
+  canonical ports. A native Moonlight cannot do that: it must reach whatever ports
+  the node published, and GameStream derives every port from one base by fixed
+  offsets. The README's recipe rebuilds the family with one
+  `nodo tunnel --listen` per slot, which works but puts the four media flows
+  through a relay that makes datagrams reliable and can head-of-line block. Fine
+  against a node on your own machine, a real cost against a remote one, and direct
+  exposure gives the offsets problem back. Unresolved.
 - Note for anyone tempted to put Moonlight *in* an image: it is packaged for Linux
   `arm64` nowhere. Not in Debian, and upstream ships only an `x86_64` AppImage
   (`MoonlightPortable-arm64` is a Windows build). On the **host** it installs
@@ -183,10 +189,7 @@ each is to be what breaks first:
 - `nodo pack browser` then `nodo pack .`, and an instance of each.
 - **Sunshine's X11 capture against a display no compositor ever touched.** Xvfb
   with no window manager is not a configuration Sunshine is routinely tested on.
-- **The `sunshine.conf` keys** in `browser/service/entrypoint.sh`, written from
+- **The `sunshine.conf` keys** in `stream/service/entrypoint.sh`, written from
   Sunshine's documentation rather than from a running instance.
-- **The `POST /api/pin` request shape** in `service/sunshine.py` — moot once the
-  viewer goes.
-- Whether the node leaves GameStream's port offsets intact on a real launch —
-  also moot once the viewer goes, since a native Moonlight is told the ports it
-  was given.
+- **Whether the tunnel recipe in the README actually carries a session**, which
+  is the one thing the viewer used to make unnecessary.
