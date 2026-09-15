@@ -34,18 +34,29 @@ built for interactive latency rather than for playback.
 │  holds its credentials    │                │  Sunshine (x264, software)   │
 │  brokers the pairing PIN  │                │  pulseaudio null sink        │
 │  answers on :8080         │                │  network: *                  │
-│  network: [] (nothing)    │                └──────────────────────────────┘
+│  network: * (a ceiling)   │                └──────────────────────────────┘
 └───────────────────────────┘
 ```
 
-The split is not decoration. The viewer declares `"network": []` — it speaks to
-its node and to its child and to nothing else — while the child declares `["*"]`,
-because a browser's destinations are chosen a link at a time and cannot be
-enumerated in a file written beforehand. Keeping them in one service would mean
-one specification with open egress covering both, and no way to say in it that the
-half holding your credentials never leaves the node.
+The split buys three things, and it is worth being exact about which, because the
+fourth one — the obvious one — it does not buy.
 
-It is also what makes the child's ports usable at all; see *The port problem*.
+**Resources.** The client is 256 MB and one core; the browser is up to 6 GB and
+four. Declaring them together would mean asking every node for the larger shape
+just to open a control port.
+
+**Placement.** The child is a separate service, so the balancer can put it on a
+peer with cores free while the part you talk to stays on your node.
+
+**The child's ports, which is the one that is not obvious** — the viewer is a
+sibling on the same bridge and dials the child directly, which is what keeps
+GameStream's port offsets intact. See *The port problem*.
+
+**Not network isolation.** `Service.Network` narrows downward and only downward: a
+child's declaration is intersected with its father's, and its grandfather's, up the
+chain. So the viewer declares `["*"]` as well — not because it wants it, but
+because a parent's declaration is the ceiling for everything it launches, and a
+browser needs the ceiling raised. The *Network* section below is what that costs.
 
 ### What the viewer does
 
@@ -188,14 +199,44 @@ draw.
 ## Network
 
 ```json
-"network": []                  // the viewer
 "network": [{ "tags": ["*"] }] // the child
+"network": [{ "tags": ["*"] }] // the viewer, and not because it wants it
 ```
 
-`[]` on the viewer is a real claim, checked by the node's firewall: the only host
-address a guest is granted is the node's own gateway, and the only other thing it
-reaches is a child it launched. Your credentials, the session's addresses and the
-administrator password for the child are all on that side of the line.
+### Why the viewer declares it too
+
+A first draft of this service had `"network": []` on the viewer and a paragraph
+about how the half holding your credentials never leaves the node. That paragraph
+described a service that does not run. `Service.Network` is authorized by
+intersection with the ancestor chain:
+
+> *"Declaring a `Network` is a request, not a grant. An instance launched by
+> another local instance may only use the networks that **every** generation above
+> it also declares: the requested set is intersected, by tag match, with the direct
+> father's spec, then with its father's, up to the topmost local ancestor."*
+> <sub>`docs/NETWORKS.md`</sub>
+
+`match_networks` is a plain tag-set intersection, and `*` is matched literally like
+any other tag. A father declaring `[]` therefore grants its child nothing — and
+`[ "ipv4", "public" ]` would grant a child asking for `*` nothing either.
+
+**The way it fails is the reason this is worth a section.** It does not fail.
+`filter_networks_with_ancestors` returns an empty list,
+`build_network_resolution` raises nothing, and the guest boots with the default
+`block_all` and not one allow rule. You get a browser that loads no page, reports
+no error, and has a perfectly healthy instance record. Every symptom points at
+Chromium, at DNS, at the encoder — at anything except two characters missing from
+the *parent's* manifest.
+
+So what is actually true about the viewer's exposure, stated without the part that
+was wrong: the node writes `allow_all_egress_rule` for its VM, so it *could* reach
+the internet, and it does not, because it opens no outbound connection — it speaks
+to its node's gateway and to the child it launched. That is a property of code you
+can read, not of a line in a manifest, and the difference matters: the manifest is
+what a node operator judges before admitting the launch, and on this point it now
+tells them less than the truth. `NODE-REQUIREMENTS.md` #3 is what would fix that.
+
+### Why the child declares it
 
 `["*"]` on the child is the honest form of "this is a browser". The narrower
 alternative is not narrower in the way it looks: nodo resolves a domain tag to
@@ -271,13 +312,22 @@ on, so change both to match yours.
 python3 -m unittest discover -s tests -v
 ```
 
-Ten, and they need neither a node nor `node_controller`: the library's imports are
-guarded so that the two pieces of this service that contain real reasoning can be
-run on their own. Those two are `config.resolve`, where a string somebody typed
-becomes a number the child is launched with, and `Child.offsets_survived`, which
-decides whether this node's port allocator left a session a client can open. Both
-fail three layers away from where the mistake was made, which is the argument for
-asserting them here.
+Thirteen, and they need neither a node nor `node_controller`: the library's imports
+are guarded so that the pieces of this service containing real reasoning can be run
+on their own.
+
+Three things are asserted, and they have the same shape — each one fails somewhere
+other than where the mistake was made:
+
+- `config.resolve`, where a string somebody typed becomes a number the child is
+  launched with. An odd width is not a smaller picture, it is one the decoder reads
+  wrong, three layers away.
+- `Child.offsets_survived`, which decides whether this node's port allocator left a
+  session a client can open, or one that fails looking like a network fault.
+- **the two manifests against each other**, because a child's networks are
+  intersected with its parent's and a parent that declares less does not produce an
+  error — it produces a browser that loads no page. That one is in `tests/` because
+  it was got wrong here first.
 
 ## What this is not
 
@@ -304,8 +354,8 @@ Specification and implementation, neither packed nor run.
 Written: both `.service/` trees, the child's entrypoint, and the viewer — config,
 child lifecycle, the Sunshine client and the HTTP API. Every version, digest and
 checksum in the two Dockerfiles was checked against the Debian archive and the
-GitHub release it names, on 2026-09-15. The settings and slot logic have tests and
-they pass.
+GitHub release it names, on 2026-09-15. The settings, the slot logic and the
+network inheritance between the two manifests have tests, and they pass.
 
 Not yet true of any of it: `nodo pack` has not been run, no instance has started,
 and no Moonlight has connected. Three things in particular are written from

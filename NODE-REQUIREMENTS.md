@@ -1,13 +1,15 @@
 # What this service needs from a node, and does not have
 
-Two things. One is two lines of kernel configuration; the other is a channel that
-does not exist in any form. Everything else in `remote-browser` runs on nodo as it
-ships, which is why they are worth stating precisely rather than as a wish list.
+Three things. One is two lines of kernel configuration, one is a channel that does
+not exist in any form, and one is a distinction the specification language cannot
+currently draw. Everything else in `remote-browser` runs on nodo as it ships,
+which is why they are worth stating precisely rather than as a wish list.
 
 | | what | without it | cost to the node |
 |---|---|---|---|
 | **1** | `CONFIG_INPUT=y` + `CONFIG_INPUT_UINPUT=y` in the guest kernel | the stream is **view-only**: you can watch a browser and not touch it | two symbols, tens of KB of `Image`, on every guest |
 | **2** | a channel from a guest to one Unix socket on the host | there is **no viewer service**: the pixels have to be collected by a program running outside the node | one spec field, one firewall rule the node already writes, one operator switch |
+| **3** | a `Service.Network` a parent passes down without holding | a parent that launches a browser must declare open egress **for itself**, and the manifest stops describing what the instance does | one field, read in one function |
 
 And two things this service deliberately does **not** ask for, listed because the
 obvious reading of "run a browser" is that it needs them: a GPU, and a sound card.
@@ -195,6 +197,72 @@ and reuses a rule the node already writes. B is where this should end up.
   way `ServiceTunnel` does. `pricing.TUNNEL_OPEN_MU` and `NET_MU_PER_GIB` are the
   precedent; whichever way it goes, it should be a decision with a number rather
   than an omission.
+
+---
+
+## 3. A grant a parent passes down without holding
+
+`Service.Network` is authorized by intersection up the ancestor chain: a child may
+use a domain only if its father declared it, and its father's father, to the top.
+The AND is right, and the induction behind it is right — a father can only pass on
+what it was passed. What is missing is that the same declaration does two jobs at
+once, and only one of them is wanted here:
+
+- it **grants** the domain to everything this instance launches, and
+- it **takes** the domain for this instance's own VM.
+
+There is no way to write the first without the second. So the viewer in this
+repository, whose job is to hold a password and answer three HTTP routes, declares
+`["*"]` — and the node duly writes `allow_all_egress_rule` for it. The manifest,
+which is the thing an operator reads before admitting a launch, now says the
+control plane of the session may reach the entire internet. It may. It does not.
+Nothing in the specification can tell those apart.
+
+This is not a corner case of one service. It is what happens to **every**
+orchestrator with a child that talks to the world, which is most of them: the
+parent is always the most privileged network declaration in its own subtree, and
+it is usually the component that holds the secrets. The model inverts least
+privilege exactly where it is most wanted.
+
+### The shape of the fix
+
+A flag on the network entry — call it `delegable_only`, `grant` versus `use`, any
+name — meaning *this domain authorizes my descendants and is not opened for me*.
+
+```json
+"network": [
+  { "tags": ["*"], "grant_only": true,
+    "prose": "my children may reach the web; I do not" }
+]
+```
+
+What changes is small and localized:
+
+- `filter_networks_with_ancestors` keeps matching on tags exactly as it does now.
+  A `grant_only` entry authorizes a descendant's request in the intersection —
+  that is the whole point of it — so the walk is untouched.
+- `build_network_resolution` drops `grant_only` entries from *this* instance's
+  own resolution, so no `allow_all_egress_rule` and no per-destination allow is
+  written for its VM.
+- The operator's `service_networks` policy judges it the same way. A node that
+  blacklists `*` should still refuse a service that grants `*` downward, because
+  the traffic still ends up on that node's wire. Nothing about the refusal changes;
+  only who gets the firewall rule does.
+
+### Why it cannot be left to convention
+
+Because the current failure is silent, and in the direction that hides it. A
+parent that under-declares does not get an error: `filter_networks_with_ancestors`
+returns `[]`, `build_network_resolution` raises nothing, and the child boots with
+`block_all` and no allow rules — a browser that loads no page and reports no
+problem. Every symptom points at the child.
+
+So the pressure on an author debugging this is to widen the parent's declaration
+until it works, and the widest declaration always works. The model therefore
+teaches exactly the wrong habit, and does it with a symptom that never names the
+file that has to change. A `grant_only` flag is the smallest thing that lets an
+author widen the grant without widening the grantee — and, just as usefully, lets
+the node's own error say which of the two was missing.
 
 ---
 

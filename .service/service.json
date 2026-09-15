@@ -28,7 +28,14 @@
         "CHILD_READY_TIMEOUT_S",
         "CHILD_INITIAL_MU"
     ],
-    "network": [],
+    "network": [
+        {
+            "tags": [
+                "*"
+            ],
+            "prose": "Not an appetite: a ceiling. Service.Network is authorized by intersection with every ancestor -- filter_networks_with_ancestors ANDs the requested tags against the direct father's spec, then its father's, up the chain -- so a child can never reach a domain its parent did not also declare. The browser child this service launches declares '*', and '*' is matched literally by tag, so this instance has to declare it too or the child is launched with no egress at all. Worth knowing how that fails: the launch SUCCEEDS. filter_networks_with_ancestors returns an empty list, build_network_resolution raises nothing, and the guest boots with the default block_all and not one allow rule -- a browser that loads no page and reports no error. This service itself opens no outbound connection: it speaks to its node's gateway and to the child it launched. But that is a property of its code, which you can read, and not of this line, which cannot express it. See NODE-REQUIREMENTS.md #3."
+        }
+    ],
     "resources": {
         "at_init": {
             "mem_limit": 268435456,
