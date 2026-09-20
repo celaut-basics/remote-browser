@@ -22,7 +22,9 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         tigervnc-standalone-server=1.15.0+dfsg-2.1~deb13u1 \
         tigervnc-common=1.15.0+dfsg-2.1~deb13u1 \
-        chromium=152.0.7977.82-1~deb13u1 \
+        chromium=153.0.8010.52-1~deb13u1 \
+        chromium-common=153.0.8010.52-1~deb13u1 \
+        chromium-sandbox=153.0.8010.52-1~deb13u1 \
         x11-utils=7.7+7 \
         fonts-liberation=1:2.1.5-3 \
         fonts-dejavu-core=2.37-8 \
@@ -35,5 +37,5 @@ RUN useradd --create-home --home-dir /home/browser --shell /usr/sbin/nologin bro
     && chown -R browser:browser /var/lib/browser /var/log/browser /run/vnc \
     && chmod 700 /run/vnc
 
-COPY service /service
+COPY service/service /service
 RUN chmod +x /service/entrypoint.sh
