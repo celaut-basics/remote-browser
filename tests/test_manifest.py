@@ -42,6 +42,15 @@ def entrypoint(service):
         return handle.read()
 
 
+def dockerfile(service):
+    with open(os.path.join(ROOT, service, ".service", "Dockerfile")) as handle:
+        return handle.read()
+
+
+# `COPY <origin> <dest>`, skipping flags like --from=builder.
+_COPY = re.compile(r"^\s*COPY\s+((?:--[^\s]+\s+)*)([^\s]+)\s+([^\s]+)\s*$", re.MULTILINE | re.IGNORECASE)
+
+
 class TestLayout(unittest.TestCase):
     def test_each_service_is_complete(self):
         for service in SERVICES:
@@ -58,6 +67,48 @@ class TestLayout(unittest.TestCase):
                 os.path.isfile(os.path.join(ROOT, service, *entry)),
                 f"{service}: init.entry_path {entry} is not a file in the tree. It packs "
                 "fine and the instance can never start.",
+            )
+
+
+class TestPackerContext(unittest.TestCase):
+    """The one difference between `docker build` here and `nodo pack` there.
+
+    The packer builds with the context set to `.service/`, stages the project
+    under `service/` inside it, and rewrites COPY origins that start with `.` to
+    match. A bare relative origin is NOT rewritten -- PACKING.md is explicit --
+    so `COPY service /service` resolves to `.service/service` under the packer
+    and to `<svc>/service` under docker, and only one of those is the tree.
+
+    It cost a pack: the build ran the whole apt layer and then died on
+    `chmod: cannot access '/service/entrypoint.sh'`. Nothing in the repository
+    could have caught it, because a plain `docker build` is happy either way.
+    """
+
+    def test_relative_copy_origins_are_dot_prefixed(self):
+        for service in SERVICES:
+            for flags, origin, _dest in _COPY.findall(dockerfile(service)):
+                if "--from=" in flags or origin.startswith("/") or "://" in origin:
+                    continue
+                self.assertTrue(
+                    origin.startswith("./"),
+                    f"{service}: `COPY {origin}` is a bare relative origin. The packer "
+                    "rewrites only origins beginning with '.', so this reads "
+                    f"`.service/{origin}` under `nodo pack` and fails there while "
+                    "building fine under `docker build`. Write `./" + origin + "`.",
+                )
+
+    def test_the_entry_path_is_where_the_dockerfile_puts_it(self):
+        # entry_path is absolute in the packed filesystem. The COPY destination is
+        # what decides where that file lands, and the two are written in different
+        # files by different hands.
+        for service in SERVICES:
+            entry = "/" + "/".join(manifest(service)["init"]["entry_path"])
+            dests = [dest.rstrip("/") for _f, _o, dest in _COPY.findall(dockerfile(service))]
+            self.assertTrue(
+                any(entry == dest or entry.startswith(dest + "/") for dest in dests),
+                f"{service}: init.entry_path is {entry}, and no COPY in the Dockerfile "
+                f"puts anything there (destinations: {dests}). The service packs and "
+                "the instance cannot start.",
             )
 
 

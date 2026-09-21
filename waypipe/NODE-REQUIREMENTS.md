@@ -65,15 +65,38 @@ diffing and lz4.
 So the cost is **proportional to how much of the screen changes**, not to the
 resolution:
 
-| | damage per frame at 1080p |
-|---|---|
-| still page, cursor blinking | hundreds of bytes |
-| scrolling text | whole screen, but lz4 does well on text (3–5×) → ~2 MB |
-| video, GIF, carousel, CSS animation | the worst case, ~8.3 MB |
+| | damage per frame at 1080p | measured |
+|---|---|---|
+| still page, cursor blinking | hundreds of bytes | **zero** |
+| scrolling text | whole screen, but lz4 does well on text (3–5×) → ~2 MB | **~0.65 MB**, lz4 got 12.8× |
+| video, GIF, carousel, CSS animation | the worst case, ~8.3 MB | not measured |
 
 That is excellent for most GUI programs and awkward for a browser specifically,
 because scrolling is full-screen damage and scrolling is what one does in a
 browser. The cost is bursty, and the bursts land on the moments of interaction.
+
+**Measured, 2026-09-15**, against a real channel — Chromium in this image under
+`waypipe server`, the `socat` reversal, `waypipe client` and a compositor at the
+other end — on a page of monospaced text that scrolls itself at ~30 fps. The screen
+was 1280×800; the 1080p column scales by pixel count.
+
+| | 1280×800, measured on the channel |
+|---|---|
+| idle, page loaded, nothing moving, 15 s | **0 bytes** |
+| scrolling, 20 s | 191,742,048 B = **9.59 MB/s** |
+| per frame at 30 fps | **0.32 MB** against a 4.10 MB raw frame — **12.8×** |
+
+Two corrections, in opposite directions, and both worth having:
+
+- **lz4 does better on text than 3–5×.** 12.8× here. Monospaced text is the
+  compressible extreme, but text is the case this table is about. Scaled to 1080p
+  that is ~0.65 MB a frame rather than ~2 MB, and ~70 GB/hour of continuous
+  scrolling rather than the order of 360 GB/hour below. Still twenty times H.264's
+  3.6 GB/hour, so the verdict does not move: the estimate was pessimistic, not
+  wrong.
+- **Idle is not "hundreds of bytes", it is nothing.** Zero bytes in 15 seconds on
+  a loaded, still page. Nothing commits, so nothing is sent — and the architecture's
+  best case is better than it claimed.
 
 **And a cost that only shows up in the bill.** Tunnelled,
 `pricing.NET_MU_PER_GIB` meters this: damage rates run on the order of 360 GB/hour
