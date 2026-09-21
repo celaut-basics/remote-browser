@@ -50,8 +50,19 @@ if [ "${#VNC_PASSWORD}" -gt 8 ]; then
   log "note: VNC_PASSWORD is ${#VNC_PASSWORD} characters and RFB will use the first 8"
 fi
 
+# /run is a tmpfs, mounted fresh and empty on every boot -- by nodo's initramfs
+# and by any systemd host alike. The `mkdir -p /run/vnc` in the Dockerfile ran at
+# build time and is gone before this line ever runs, so the directory has to be
+# made here. (/var/lib/browser and /var/log/browser are fine: only /run and /tmp
+# are wiped.)
+mkdir -p "$(dirname "$PASSWD")"
+chmod 700 "$(dirname "$PASSWD")"
+chown browser:browser "$(dirname "$PASSWD")"
+
+command -v vncpasswd >/dev/null 2>&1 \
+  || fail "vncpasswd not found; it ships in tigervnc-tools, not tigervnc-common"
 printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$PASSWD" \
-  || fail "vncpasswd failed; is tigervnc-common installed?"
+  || fail "vncpasswd failed writing $PASSWD"
 chmod 600 "$PASSWD"
 chown browser:browser "$PASSWD"
 

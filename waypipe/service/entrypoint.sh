@@ -23,9 +23,13 @@ LOGS=/var/log/browser
 export TZ="$TIMEZONE"
 export XDG_RUNTIME_DIR=/run/user/1000
 
+# /run is a tmpfs mounted empty on every boot, so the /run/waypipe and
+# /run/user/1000 the Dockerfile created at build time do not exist here. Same
+# bug as vnc/ (issue #2); made at runtime instead.
+mkdir -p "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
 rm -f "$CHANNEL"
-mkdir -p "$STATE" "$LOGS"
-chown -R browser:browser "$STATE" "$LOGS" /run/waypipe
+chown -R browser:browser "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_DIR"
 
 # --- The direction reversal ---------------------------------------------------
 #
