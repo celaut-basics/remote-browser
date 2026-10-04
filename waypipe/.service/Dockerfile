@@ -5,10 +5,29 @@
 # architecture: there is no X server, no compositor, no video encoder and no
 # sound daemon. Chromium is an ordinary Wayland client, and its compositor is the
 # one on the user's own machine, reached through waypipe.
+#
+# No line below names an architecture. The base digest is a multi-arch index and
+# every pin exists, at the same version, for linux/arm64 and linux/amd64. To pack
+# for amd64, change `architecture` in service.json and nothing else.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
-#  chromium   the browser, and the only process that draws anything. Not Chrome:
-#             Google publishes no Chrome for linux/arm64.
+# apt reads a frozen snapshot of the Debian archive, not the live mirror. The live
+# mirror drops a Chromium version a few weeks after it is published, and an exact
+# pin then fails in apt. See the same block in vnc/.service/Dockerfile. To update,
+# change DEBIAN_SNAPSHOT and the pins together, in all three images.
+ARG DEBIAN_SNAPSHOT=20261004T000000Z
+RUN sed -i \
+      -e "s|^URIs: http://deb.debian.org/debian\$|URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|" \
+      -e "s|^URIs: http://deb.debian.org/debian-security\$|URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|" \
+      -e '/^URIs: /a Check-Valid-Until: no' \
+      /etc/apt/sources.list.d/debian.sources \
+    && [ "$(grep -c '^URIs: http://snapshot.debian.org/' /etc/apt/sources.list.d/debian.sources)" = 2 ]
+
+#  chromium, chromium-common
+#             the browser, and the only process that draws anything. Not Chrome:
+#             Google publishes no Chrome for linux/arm64. The two are pinned
+#             together: chromium depends on exactly its own version of
+#             chromium-common, so a pin on one alone fails in apt.
 #  chromium-sandbox
 #             the setuid helper the sandbox actually is. It is a *Recommends* of
 #             chromium and --no-install-recommends is above, so without naming it
@@ -22,10 +41,13 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 #             never listens, while a celaut slot is something a service listens
 #             on, so one socat stands between the two. See the entrypoint.
 #  fonts-*    a browser with no fonts renders every page as boxes.
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y \
-        chromium=152.0.7977.82-1~deb13u1 \
-        chromium-sandbox=152.0.7977.82-1~deb13u1 \
+#  ca-certificates
+#             the web is TLS. Without this every https:// page fails to load.
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install --no-install-recommends -y \
+        chromium=154.0.8037.92-1~deb13u1 \
+        chromium-common=154.0.8037.92-1~deb13u1 \
+        chromium-sandbox=154.0.8037.92-1~deb13u1 \
         waypipe=0.9.2-1 \
         socat=1.8.0.3-1+deb13u1 \
         fonts-liberation=1:2.1.5-3 \
@@ -37,10 +59,12 @@ RUN apt-get update \
 # Chromium keeps its own sandbox: the guest kernel has CONFIG_USER_NS=y and
 # CONFIG_SECCOMP_FILTER=y, so every layer it wants is available, and this is the
 # one service on the network whose job is to open pages nobody vetted.
+#
+# /run/waypipe and /run/user/1000 are not made here: /run is a tmpfs in the guest,
+# so the entrypoint makes them at boot (issue #2).
 RUN useradd --create-home --home-dir /home/browser --shell /usr/sbin/nologin browser \
-    && mkdir -p /var/lib/browser /var/log/browser /run/waypipe /run/user/1000 \
-    && chown -R browser:browser /var/lib/browser /var/log/browser /run/waypipe /run/user/1000 \
-    && chmod 700 /run/user/1000
+    && mkdir -p /var/lib/browser /var/log/browser \
+    && chown -R browser:browser /var/lib/browser /var/log/browser
 
 # `./service`, with the dot: the packer rewrites COPY origins beginning with `.`
 # to the `service/` subtree it stages inside the `.service/` build context, and
