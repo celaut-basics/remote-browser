@@ -21,7 +21,8 @@
         "WIDTH",
         "HEIGHT",
         "LOCALE",
-        "TIMEZONE"
+        "TIMEZONE",
+        "DNS_SERVERS"
     ],
     "network": [
         {

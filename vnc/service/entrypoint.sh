@@ -17,6 +17,7 @@ WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
 
 # shellcheck source=checks.sh
 . /service/checks.sh
@@ -30,6 +31,9 @@ export DISPLAY=:0
 export TZ="$TIMEZONE"
 mkdir -p "$STATE" "$LOGS"
 chown -R browser:browser "$STATE" "$LOGS"
+
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # --- The password, and its ceiling --------------------------------------------
 #

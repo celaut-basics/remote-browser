@@ -20,6 +20,7 @@ ADMIN_USER="${ADMIN_USER:-}"
 ADMIN_PASS="${ADMIN_PASS:-}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
 
 # shellcheck source=checks.sh
 . /service/checks.sh
@@ -43,6 +44,9 @@ STATE=/var/lib/browser
 LOGS=/var/log/browser
 mkdir -p "$STATE" "$LOGS" /run/pulse /etc/sunshine
 chown -R browser:browser "$STATE" /run/pulse
+
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # /etc/sunshine is created here because nothing else creates it: the .deb ships
 # /usr/bin/sunshine, a udev rule and a systemd user unit, and no /etc directory at

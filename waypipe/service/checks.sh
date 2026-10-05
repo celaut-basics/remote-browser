@@ -41,3 +41,41 @@ check_browser_values() {
     && [ -f "${ZONEINFO:-/usr/share/zoneinfo}/$TIMEZONE" ] \
     || fail "TIMEZONE must be a zone name such as Europe/Madrid, got '$TIMEZONE'"
 }
+
+# resolv_conf_for SERVERS: write resolv.conf lines for a list of IPv4
+# addresses to stdout. Commas or spaces separate the addresses. glibc reads
+# the first three nameserver lines only, so more than three is an error.
+resolv_conf_for() {
+  local servers server octet
+  read -r -a servers <<<"${1//,/ }"
+  [ "${#servers[@]}" -ge 1 ] || fail "DNS_SERVERS names no server"
+  [ "${#servers[@]}" -le 3 ] || fail "DNS_SERVERS names ${#servers[@]} servers; the limit is 3"
+  for server in "${servers[@]}"; do
+    [[ "$server" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] \
+      || fail "DNS_SERVERS: '$server' is not an IPv4 address"
+    for octet in ${server//./ }; do
+      [ "$((10#$octet))" -le 255 ] || fail "DNS_SERVERS: '$server' is not an IPv4 address"
+    done
+    printf 'nameserver %s\n' "$server"
+  done
+}
+
+# set_dns SERVERS [FILE]: the name servers of this guest.
+#
+# nodo does not serve DNS to a guest and does not write resolv.conf
+# (src/virtualizers/microvm/network.py in nodo). The guest keeps the file of
+# the image. In debian:trixie-slim that file names 1.1.1.1 and 1.0.0.1. These
+# services declare the `*` network, so they can reach those servers on port 53.
+#
+# DNS_SERVERS replaces that list, because the resolver sees each name that the
+# browser looks up. The file is written in place and not replaced with mv:
+# under Docker it is a mount point, and mv onto a mount point fails.
+set_dns() {
+  local file="${2:-/etc/resolv.conf}" lines
+  if [ -n "$1" ]; then
+    lines="$(resolv_conf_for "$1")" || exit 1
+    printf '%s\n' "$lines" >"$file"
+  elif ! grep -q '^nameserver ' "$file" 2>/dev/null; then
+    printf 'nameserver %s\n' 1.1.1.1 1.0.0.1 >"$file"
+  fi
+}

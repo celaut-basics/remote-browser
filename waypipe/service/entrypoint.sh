@@ -14,6 +14,7 @@ WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
 
 # shellcheck source=checks.sh
 . /service/checks.sh
@@ -34,6 +35,9 @@ mkdir -p "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 rm -f "$CHANNEL"
 chown -R browser:browser "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_DIR"
+
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # --- The direction reversal ---------------------------------------------------
 #
