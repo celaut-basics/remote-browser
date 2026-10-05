@@ -21,9 +21,17 @@ ADMIN_PASS="${ADMIN_PASS:-}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
 
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
+# SW_PRESET goes into sunshine.conf. A value with a line break would add a
+# configuration key of its own, so only the x264 preset names are accepted.
+need_one_of SW_PRESET "$SW_PRESET" \
+  ultrafast superfast veryfast faster fast medium slow slower veryslow placebo
+
 [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ] || fail \
   "ADMIN_USER and ADMIN_PASS are unset. Pass them at launch:
-     nodo execute remote-browser -e ADMIN_USER nodo -e ADMIN_PASS <something>
+     nodo execute -e ADMIN_USER nodo -e ADMIN_PASS <something> remote-browser
    Refusing rather than generating one: an unset password would leave Sunshine's
    configuration API open to anything that can reach port 47990 -- which on this
    node is every other guest on the bridge -- and a generated one would have to be

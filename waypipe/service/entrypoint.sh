@@ -15,6 +15,10 @@ HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
 
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
+
 SLOT=8081
 CHANNEL=/run/waypipe/chan.sock
 STATE=/var/lib/browser
@@ -90,7 +94,8 @@ exec runuser -u browser -- \
       --disk-cache-dir="${STATE}/cache" \
       "${START_URL}"
 
-# `exec`, so waypipe is PID 1 from here: when the session ends, the instance ends.
+# `exec`, so runuser, with waypipe under it, is PID 1 from here: when the
+# session ends, the instance ends.
 # One session per instance is deliberate. waypipe has a `recon` subcommand for
 # reattaching a server to a new channel, which would let the browser outlive a
 # disconnection, and wiring it up is in TODO.md rather than guessed at here.

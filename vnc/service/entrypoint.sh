@@ -18,6 +18,10 @@ HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
 
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
+
 STATE=/var/lib/browser
 LOGS=/var/log/browser
 PASSWD=/run/vnc/passwd
@@ -43,7 +47,7 @@ chown -R browser:browser "$STATE" "$LOGS"
 # the instance token, rather than by publishing 5900. See NODE-REQUIREMENTS.md.
 [ -n "$VNC_PASSWORD" ] || fail \
   "VNC_PASSWORD is unset. Pass it at launch:
-     nodo execute remote-browser-vnc -e VNC_PASSWORD <something>
+     nodo execute -e VNC_PASSWORD <something> remote-browser-vnc
    Note that RFB truncates it to 8 bytes whatever you choose."
 
 if [ "${#VNC_PASSWORD}" -gt 8 ]; then
