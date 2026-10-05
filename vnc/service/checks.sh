@@ -79,3 +79,17 @@ set_dns() {
     printf 'nameserver %s\n' 1.1.1.1 1.0.0.1 >"$file"
   fi
 }
+
+# node_address [ROUTE_FILE]: the IPv4 address of the default gateway.
+#
+# In a nodo guest the default gateway is the node's address on the bridge.
+# The initramfs sets it from the `ip=` kernel parameter. The node also opens
+# each `nodo tunnel` connection to a slot from this address
+# (src/tunneling/rpc_tunnel.py in nodo). /proc/net/route gives the address in
+# host byte order, which is little-endian on amd64 and on arm64.
+node_address() {
+  local hex
+  hex="$(awk '$2 == "00000000" && $3 != "00000000" { print $3; exit }' "${1:-/proc/net/route}")"
+  [[ "$hex" =~ ^[0-9A-Fa-f]{8}$ ]] || return 1
+  printf '%d.%d.%d.%d\n' "0x${hex:6:2}" "0x${hex:4:2}" "0x${hex:2:2}" "0x${hex:0:2}"
+}

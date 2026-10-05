@@ -54,9 +54,29 @@ log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 # The slot therefore listens from boot, and $CHANNEL appears at exactly the moment
 # a session begins -- which is the moment, and the only moment, at which
 # `waypipe server` can successfully dial it.
+#
+# --- Who can connect ------------------------------------------------------------
+#
+# waypipe has no authentication. The first connection gets the session: the
+# pixels of the browser, and its keyboard and mouse. vnc/ has a password and
+# stream/ has pairing. This slot has neither. Also, any other guest on the node
+# that declares the `*` network can open a connection to this guest: nodo
+# writes the `*` egress rule with no destination limit.
+#
+# So socat accepts connections from the node only. The node opens each
+# `nodo tunnel` connection from its own address on the bridge, and that address
+# is the default gateway of this guest (see node_address in checks.sh). socat
+# closes a connection from any other address and continues to listen. A
+# connection to a published port keeps the address of the client through the
+# node's DNAT, so socat refuses it too. Use `nodo tunnel`.
+#
+# If this guest has no default gateway, the instance stops. A slot that any
+# address can use is not a safe fallback.
+NODE="$(node_address)" || fail "no default gateway in /proc/net/route; cannot limit slot ${SLOT} to the node"
+log "slot ${SLOT} accepts connections from the node (${NODE}) only"
 log "listening on slot ${SLOT}; the session begins when something connects"
 runuser -u browser -- \
-  socat "TCP-LISTEN:${SLOT},reuseaddr" "UNIX-LISTEN:${CHANNEL}" \
+  socat "TCP-LISTEN:${SLOT},reuseaddr,range=${NODE}/32" "UNIX-LISTEN:${CHANNEL}" \
   >"$LOGS/socat.log" 2>&1 &
 SOCAT_PID=$!
 
