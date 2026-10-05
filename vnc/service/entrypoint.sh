@@ -5,7 +5,7 @@
 # capture step: the framebuffer it hands to a viewer is the one Chromium drew in.
 # And input arrives through XTEST, an extension of the X server itself, so nothing
 # here needs /dev/uinput -- which is the whole reason this architecture runs on an
-# unmodified node and the GameStream one does not.
+# unmodified node with no kernel input subsystem at all.
 set -euo pipefail
 
 log() { printf '%s [vnc] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -17,15 +17,57 @@ WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
 
 STATE=/var/lib/browser
 LOGS=/var/log/browser
 PASSWD=/run/vnc/passwd
 
+# --- Values from the launcher ---------------------------------------------------
+#
+# Refused at start rather than passed on. Each one reaches a command line or a
+# configuration file below, and a bad value there fails later, in a log nobody
+# reads, or not at all. START_URL is the sharp one: it is the last argument to
+# Chromium, so a value that begins with `-` would be read as a Chromium switch.
+need_int() {
+  [[ "$2" =~ ^[0-9]{1,5}$ ]] && [ "$2" -ge "$3" ] && [ "$2" -le "$4" ] \
+    || fail "$1 must be an integer from $3 to $4, got '$2'"
+}
+need_int WIDTH "$WIDTH" 320 7680
+need_int HEIGHT "$HEIGHT" 240 4320
+[[ "$START_URL" != -* ]] || fail "START_URL must not begin with '-', got '$START_URL'"
+[[ "$LOCALE" =~ ^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$ ]] \
+  || fail "LOCALE must be a language tag such as en-US, got '$LOCALE'"
+[[ "$TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] \
+  || fail "TIMEZONE must be a zone name such as Europe/Madrid, got '$TIMEZONE'"
+
 export DISPLAY=:0
 export TZ="$TIMEZONE"
 mkdir -p "$STATE" "$LOGS"
 chown -R browser:browser "$STATE" "$LOGS"
+
+# --- Name resolution ------------------------------------------------------------
+#
+# nodo serves no DNS to a guest and writes no resolv.conf into it: name resolution
+# is the service's job (src/virtualizers/microvm/network.py). This service declares
+# `*`, so it can reach a public resolver on port 53, but only if resolv.conf names
+# one. The Debian base image names Cloudflare (1.1.1.1, 1.0.0.1), and that is kept
+# when DNS_SERVERS is unset. DNS_SERVERS replaces it with up to three IPv4
+# addresses, because the resolver sees every name this browser looks up.
+if [ -n "$DNS_SERVERS" ]; then
+  read -r -a servers <<<"${DNS_SERVERS//,/ }"
+  [ "${#servers[@]}" -le 3 ] || fail "DNS_SERVERS names ${#servers[@]} servers; glibc reads 3"
+  : >/etc/resolv.conf.new
+  for server in "${servers[@]}"; do
+    [[ "$server" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] \
+      || fail "DNS_SERVERS: '$server' is not an IPv4 address"
+    printf 'nameserver %s\n' "$server" >>/etc/resolv.conf.new
+  done
+  mv /etc/resolv.conf.new /etc/resolv.conf
+elif ! grep -q '^nameserver ' /etc/resolv.conf 2>/dev/null; then
+  printf 'nameserver %s\n' 1.1.1.1 1.0.0.1 >/etc/resolv.conf
+fi
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # --- The password, and its ceiling --------------------------------------------
 #
@@ -43,7 +85,7 @@ chown -R browser:browser "$STATE" "$LOGS"
 # the instance token, rather than by publishing 5900. See NODE-REQUIREMENTS.md.
 [ -n "$VNC_PASSWORD" ] || fail \
   "VNC_PASSWORD is unset. Pass it at launch:
-     nodo execute remote-browser-vnc -e VNC_PASSWORD <something>
+     nodo execute -e VNC_PASSWORD <something> remote-browser-vnc
    Note that RFB truncates it to 8 bytes whatever you choose."
 
 if [ "${#VNC_PASSWORD}" -gt 8 ]; then
@@ -51,10 +93,9 @@ if [ "${#VNC_PASSWORD}" -gt 8 ]; then
 fi
 
 # /run is a tmpfs, mounted fresh and empty on every boot -- by nodo's initramfs
-# and by any systemd host alike. The `mkdir -p /run/vnc` in the Dockerfile ran at
-# build time and is gone before this line ever runs, so the directory has to be
-# made here. (/var/lib/browser and /var/log/browser are fine: only /run and /tmp
-# are wiped.)
+# and by any systemd host alike. A directory made there at build time is gone
+# before this line runs, so it is made here and not in the Dockerfile (issue #2).
+# (/var/lib/browser and /var/log/browser are fine: only /run and /tmp are wiped.)
 mkdir -p "$(dirname "$PASSWD")"
 chmod 700 "$(dirname "$PASSWD")"
 chown browser:browser "$(dirname "$PASSWD")"
@@ -98,7 +139,19 @@ log "display :0 is up"
 # --disable-gpu: the guest kernel has `# CONFIG_DRM is not set`, so there is no
 # /dev/dri and software rasterisation is what is left.
 #
+# /dev/shm: the nodo guest init mounts a tmpfs there, sized at half the guest's
+# memory, and Chromium moves every frame between its processes through it. So
+# --disable-dev-shm-usage, which moves that traffic to /tmp on the disk, is set
+# only when /dev/shm is small, as it is in a default container (64 MiB).
+#
 # There is no audio in this architecture. RFB carries none.
+shm_flags=()
+shm_kib="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $4 }')"
+if [ "${shm_kib:-0}" -lt 524288 ]; then
+  shm_flags=(--disable-dev-shm-usage)
+  log "note: /dev/shm has ${shm_kib:-0} KiB free; chromium will use /tmp instead"
+fi
+
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   env DISPLAY=:0 TZ="$TZ" \
@@ -107,7 +160,7 @@ runuser -u browser -- \
     --no-first-run \
     --no-default-browser-check \
     --disable-gpu \
-    --disable-dev-shm-usage \
+    "${shm_flags[@]}" \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
     --lang="${LOCALE}" \
