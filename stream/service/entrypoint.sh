@@ -196,6 +196,11 @@ SUNSHINE_PID=$!
 # runuser drops to an unprivileged user so Chromium keeps its own sandbox. See the
 # Dockerfile: the guest kernel has the namespaces and seccomp it needs, and this is
 # the one service on the network whose job is to open pages nobody vetted.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
+# the wrapper decides from the real size.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   chromium \
@@ -203,7 +208,6 @@ runuser -u browser -- \
     --no-first-run \
     --no-default-browser-check \
     --disable-gpu \
-    --disable-dev-shm-usage \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
     --lang="${LOCALE}" \

@@ -101,6 +101,11 @@ log "client connected; channel is up at ${CHANNEL}"
 #
 # There is no audio in this architecture. Wayland carries none, and waypipe
 # carries Wayland; a sound path would be a second channel and it is not here.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
+# the wrapper decides from the real size.
 log "starting chromium at ${START_URL} (${WIDTH}x${HEIGHT})"
 exec runuser -u browser -- \
   env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" TZ="$TZ" \
@@ -111,7 +116,6 @@ exec runuser -u browser -- \
       --no-default-browser-check \
       --ozone-platform=wayland \
       --disable-gpu \
-      --disable-dev-shm-usage \
       --window-size="${WIDTH},${HEIGHT}" \
       --lang="${LOCALE}" \
       --user-data-dir="${STATE}/profile" \

@@ -107,6 +107,11 @@ log "display :0 is up"
 # /dev/dri and software rasterisation is what is left.
 #
 # There is no audio in this architecture. RFB carries none.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
+# the wrapper decides from the real size.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   env DISPLAY=:0 TZ="$TZ" \
@@ -115,7 +120,6 @@ runuser -u browser -- \
     --no-first-run \
     --no-default-browser-check \
     --disable-gpu \
-    --disable-dev-shm-usage \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
     --lang="${LOCALE}" \
