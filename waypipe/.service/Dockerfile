@@ -43,6 +43,10 @@ RUN sed -i \
 #  fonts-*    a browser with no fonts renders every page as boxes.
 #  ca-certificates
 #             the web is TLS. Without this every https:// page fails to load.
+#  tzdata     zoneinfo files. The entrypoint checks TIMEZONE against
+#             /usr/share/zoneinfo. libc6 only Recommends tzdata, and
+#             --no-install-recommends would omit it if the base image did not
+#             already install it. Default TIMEZONE is UTC.
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install --no-install-recommends -y \
         chromium=154.0.8037.92-1~deb13u1 \
@@ -54,6 +58,7 @@ RUN apt-get -o Acquire::Retries=5 update \
         fonts-dejavu-core=2.37-8 \
         fonts-noto-cjk=1:20240730+repack1-1 \
         ca-certificates=20250419 \
+        tzdata=2026c-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Chromium keeps its own sandbox: the guest kernel has CONFIG_USER_NS=y and

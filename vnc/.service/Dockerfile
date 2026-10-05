@@ -59,6 +59,11 @@ RUN sed -i \
 #                               boxes.
 #  ca-certificates              the web is TLS. Without this every https:// page
 #                               fails to load.
+#  tzdata                       zoneinfo files. The entrypoint checks TIMEZONE
+#                               against /usr/share/zoneinfo. libc6 only
+#                               Recommends tzdata, and --no-install-recommends
+#                               would omit it if the base image did not already
+#                               install it. Default TIMEZONE is UTC.
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install --no-install-recommends -y \
         tigervnc-standalone-server=1.15.0+dfsg-2.1~deb13u1 \
@@ -72,6 +77,7 @@ RUN apt-get -o Acquire::Retries=5 update \
         fonts-dejavu-core=2.37-8 \
         fonts-noto-cjk=1:20240730+repack1-1 \
         ca-certificates=20250419 \
+        tzdata=2026c-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # /run/vnc is not made here: /run is a tmpfs in the guest, so the entrypoint makes
