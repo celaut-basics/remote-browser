@@ -135,10 +135,13 @@ going to.
 ## Pack
 
 ```bash
-nodo pack vnc        # needs nothing from the node
-nodo pack waypipe    # needs nodo display, or three commands by hand
-nodo pack stream     # view-only until the guest kernel has uinput
+nodo pack vnc
+nodo pack waypipe
+nodo pack stream
 ```
+
+Packing does not need a display or uinput. Those are run-time limits. See
+[Which to run](#which-to-run) and each `NODE-REQUIREMENTS.md`.
 
 `architecture` is `linux/arm64` in all three. The packer builds for the
 architecture that `service.json` names, not for the host
@@ -182,7 +185,7 @@ guest keeps the file of the image, and in `debian:trixie-slim` that file names
 python3 -m unittest discover -s tests -v
 ```
 
-Twenty-four, in two files. They need Python 3 and bash, and nothing else. If
+Twenty-six, in two files. They need Python 3 and bash, and nothing else. If
 `shellcheck` is installed, one test also runs it on each entrypoint.
 
 `test_manifest.py` checks each manifest against its own entrypoint and its own

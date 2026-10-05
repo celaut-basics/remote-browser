@@ -32,7 +32,7 @@ need_one_of SW_PRESET "$SW_PRESET" \
 
 [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ] || fail \
   "ADMIN_USER and ADMIN_PASS are unset. Pass them at launch:
-     nodo execute -e ADMIN_USER nodo -e ADMIN_PASS <something> remote-browser
+     nodo execute -e ADMIN_USER admin -e ADMIN_PASS <something> remote-browser
    Refusing rather than generating one: an unset password would leave Sunshine's
    configuration API open to anything that can reach port 47990 -- which on this
    node is every other guest on the bridge -- and a generated one would have to be
@@ -199,8 +199,9 @@ SUNSHINE_PID=$!
 #
 # /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
 # /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
-# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
-# the wrapper decides from the real size.
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   chromium \

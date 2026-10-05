@@ -110,8 +110,9 @@ log "display :0 is up"
 #
 # /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
 # /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
-# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
-# the wrapper decides from the real size.
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   env DISPLAY=:0 TZ="$TZ" \

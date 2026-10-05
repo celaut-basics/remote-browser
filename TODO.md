@@ -95,7 +95,9 @@ What is left is the part that needs a node, rather than an image.
 3. **The entrypoint changes of 2026-10-05, in a real guest.** Read against the nodo
    source and run in Docker only:
    - the `waypipe/` slot accepts the `nodo tunnel` connection, which comes from the
-     node's bridge address, and refuses a connection from another guest;
+     node's bridge address, and refuses a connection from another guest. socat now
+     restarts if a reject exits it; the source IP is still assumed, not bound;
+   - default `TIMEZONE=UTC` finds `/usr/share/zoneinfo/UTC` after the `tzdata` pin;
    - name resolution works with the `resolv.conf` of the image, and with
      `DNS_SERVERS`.
 4. **Whether a node leaves enough of the port layout intact for the eight-tunnel
