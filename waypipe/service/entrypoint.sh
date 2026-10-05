@@ -65,27 +65,35 @@ log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 #
 # So socat accepts connections from the node only. The node opens each
 # `nodo tunnel` connection from its own address on the bridge, and that address
-# is the default gateway of this guest (see node_address in checks.sh). socat
-# closes a connection from any other address and continues to listen. A
-# connection to a published port keeps the address of the client through the
-# node's DNAT, so socat refuses it too. Use `nodo tunnel`.
+# is the default gateway of this guest (see node_address in checks.sh). That
+# source IP is the usual connected-route choice. rpc_tunnel.py does not bind()
+# it, so a node run still has to confirm it. A connection to a published port
+# keeps the address of the client through the node's DNAT, so socat refuses it
+# too. Use `nodo tunnel`.
+#
+# range= closes a connection from any other address. Without fork, some socat
+# versions then exit. The loop starts socat again until a valid client creates
+# $CHANNEL, so a probe from another `*` guest does not kill the instance. One
+# session per instance: the loop stops when the channel exists.
 #
 # If this guest has no default gateway, the instance stops. A slot that any
 # address can use is not a safe fallback.
 NODE="$(node_address)" || fail "no default gateway in /proc/net/route; cannot limit slot ${SLOT} to the node"
 log "slot ${SLOT} accepts connections from the node (${NODE}) only"
 log "listening on slot ${SLOT}; the session begins when something connects"
-runuser -u browser -- \
-  socat "TCP-LISTEN:${SLOT},reuseaddr,range=${NODE}/32" "UNIX-LISTEN:${CHANNEL}" \
-  >"$LOGS/socat.log" 2>&1 &
-SOCAT_PID=$!
-
-# Poll rather than sleep a fixed amount: the wait is for an event (the host
-# connecting), not for a duration, and it has no deadline -- an instance nobody
-# has connected to yet is not a failed instance.
-log "waiting for a client"
+: >"$LOGS/socat.log"
+SOCAT_PID=""
 while [ ! -S "$CHANNEL" ]; do
-  kill -0 "$SOCAT_PID" 2>/dev/null || fail "socat exited before any client connected (see $LOGS/socat.log)"
+  if [ -n "$SOCAT_PID" ]; then
+    kill -0 "$SOCAT_PID" 2>/dev/null || SOCAT_PID=""
+  fi
+  if [ -z "$SOCAT_PID" ]; then
+    runuser -u browser -- \
+      socat "TCP-LISTEN:${SLOT},reuseaddr,range=${NODE}/32" "UNIX-LISTEN:${CHANNEL}" \
+      >>"$LOGS/socat.log" 2>&1 &
+    SOCAT_PID=$!
+    log "socat listening on ${SLOT} (pid ${SOCAT_PID})"
+  fi
   sleep 0.2
 done
 log "client connected; channel is up at ${CHANNEL}"
@@ -104,8 +112,9 @@ log "client connected; channel is up at ${CHANNEL}"
 #
 # /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
 # /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
-# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory, so
-# the wrapper decides from the real size.
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL} (${WIDTH}x${HEIGHT})"
 exec runuser -u browser -- \
   env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" TZ="$TZ" \
