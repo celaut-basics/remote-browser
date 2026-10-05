@@ -61,7 +61,7 @@ cores to spare.
 
 | | `vnc/` | `waypipe/` | `stream/` |
 |---|---|---|---|
-| browser | Chromium `152.0.7977.82` | Chromium | Chromium |
+| browser | Chromium `154.0.8037.92` | Chromium `154.0.8037.92` | Chromium `154.0.8037.92` |
 | display server | `Xvnc` (is also the RFB server) | **none** — waypipe is the compositor | `Xvfb` |
 | encoder | RFB's own | **none** | Sunshine + x264 |
 | audio | — | — | PulseAudio null sink |
@@ -140,8 +140,41 @@ nodo pack waypipe    # needs nodo display, or three commands by hand
 nodo pack stream     # view-only until the guest kernel has uinput
 ```
 
-`architecture` is `linux/arm64` in all three. The packer builds for the host it
-runs on, so change it to match yours.
+`architecture` is `linux/arm64` in all three. The packer builds for the
+architecture that `service.json` names, not for the host
+(`src/packers/zip_with_dockerfile.py` in nodo). A packer host of a different
+architecture needs a binfmt_misc handler, and a node of a different architecture
+runs the service under QEMU emulation, which is slow. So on an `x86_64` node,
+change `architecture` to `linux/amd64`. That is the only change: the Dockerfiles
+name no architecture, the base image digest is a multi-architecture index, and
+each pinned package exists at the same version for both.
+
+`nodo pack` uses the packer service of the node. To build with the local BuildKit
+for one run, add `--local`. The packer copies only the `service/` directory of
+each service into the build (`include` in `pack_config.json`).
+
+### Launcher values
+
+Give each value with `nodo execute -e NAME VALUE <service>`. Each entrypoint
+checks the values before it uses them and stops with a `FATAL` line if one is
+wrong. The checks are in `service/checks.sh`. That file is the same in all three
+directories.
+
+| name | in | default | check |
+|---|---|---|---|
+| `VNC_PASSWORD` | `vnc/` | none, required | not empty; RFB uses the first 8 bytes |
+| `ADMIN_USER`, `ADMIN_PASS` | `stream/` | none, required | not empty |
+| `SW_PRESET` | `stream/` | `ultrafast` | an x264 preset name |
+| `START_URL` | all | `about:blank` | must not start with `-` |
+| `WIDTH`, `HEIGHT` | all | `1920`, `1080` | integers, 320–7680 and 240–4320 |
+| `LOCALE` | all | `en-US` | a language tag |
+| `TIMEZONE` | all | `UTC` | a file in `/usr/share/zoneinfo` |
+| `DNS_SERVERS` | all | the image's `resolv.conf` | one to three IPv4 addresses |
+
+nodo does not serve DNS to a guest and does not write `resolv.conf` into it. The
+guest keeps the file of the image, and in `debian:trixie-slim` that file names
+`1.1.1.1` and `1.0.0.1`. The resolver sees each name that the browser looks up, so
+`DNS_SERVERS` lets you select a different one.
 
 ## Tests
 
@@ -149,16 +182,20 @@ runs on, so change it to match yours.
 python3 -m unittest discover -s tests -v
 ```
 
-Eleven, over all three services, and they check each manifest against its own
-entrypoint and its own Dockerfile — which is the class of bug nothing else would
-catch. `service.json`
-declares what a node will accept and which ports it will open; `entrypoint.sh`
-decides what is read and bound; nothing joins the two, so they drift in both
-directions and both are silent. A variable declared and never read is one the
+Twenty-four, in two files. They need Python 3 and bash, and nothing else. If
+`shellcheck` is installed, one test also runs it on each entrypoint.
+
+`test_manifest.py` checks each manifest against its own entrypoint and its own
+Dockerfile — which is the class of bug nothing else would catch. `service.json`
+declares which ports the node opens and which values the service reads;
+`entrypoint.sh` decides what is read and bound; nothing joins the two, so they
+drift in both directions and both are silent. nodo does not compare the names
+given with `nodo execute -e` against `envs`, so the manifest is documentation
+for the operator, and a wrong one misleads with no error. A variable declared and never read is one the
 operator can pass to no effect — `BITRATE_KBPS` was exactly that for a while,
 before anyone noticed GameStream negotiates the bitrate from the client side.
 
-Two of the eleven are about the packer rather than the manifest, and they are there
+Two of these are about the packer rather than the manifest, and they are there
 because `nodo pack` and `docker build` disagreed: the packer builds with the context
 set to `.service/` and rewrites only the `COPY` origins that begin with a dot, so
 `COPY service /service` meant two different directories depending on who was
@@ -210,9 +247,12 @@ What is confirmed, in one line each:
 
 What still needs a node rather than an image: `nodo pack` through to a service id,
 `nodo tunnel` and the node's DNAT, the eight-tunnel port recipe, and a real
-Moonlight session. Those are the first five items of [`TODO.md`](TODO.md).
+Moonlight session. Those are the first six items of [`TODO.md`](TODO.md).
 
-Every version, digest and checksum was checked against the Debian archive and the
-GitHub release it names on 2026-09-15 — and one of them still had to be read off the
-target architecture instead: `pulseaudio` is `+b1` on `arm64`, a binNMU the source
-index does not show.
+apt reads `snapshot.debian.org` at `DEBIAN_SNAPSHOT` (`20261004T000000Z`), not the
+live mirror. The live mirror keeps one Chromium version, and it removed 152 and 153
+in turn, so each exact pin stopped to resolve some weeks after it was written. Each
+pin in the three images exists in that snapshot for `arm64` and for `amd64`
+(checked against the `Packages` index of each architecture on 2026-10-05).
+`pulseaudio` is `17.0+dfsg1-2+b1` in the snapshot on both architectures. The
+Sunshine digests in `stream/` are the ones that GitHub publishes for each asset.

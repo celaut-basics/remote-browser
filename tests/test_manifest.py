@@ -9,8 +9,10 @@ the two. They drift in both directions and both are silent.
   node accepts it, and it changes nothing. `BITRATE_KBPS` was exactly this,
   declared for a while before anyone noticed GameStream negotiates the bitrate
   from the client side.
-- Read and never declared — the entrypoint has a knob the node will refuse to
-  pass, so it is stuck at its default with no way to say otherwise.
+- Read and never declared — the entrypoint has a knob that the manifest does not
+  show. nodo does not compare `-e` names with `envs` (src/utils/guest_env.py in
+  nodo), so the value gets through, but nobody who reads the manifest knows that
+  the knob exists.
 - A slot declared on a port nothing binds — the node opens a firewall hole and
   publishes an address where nobody answers.
 
@@ -119,7 +121,7 @@ class TestEnvironment(unittest.TestCase):
             self.assertFalse(
                 unused,
                 f"{service}: declared in service.json and never read by entrypoint.sh: "
-                f"{sorted(unused)}. The node will accept these at `nodo execute -e` and "
+                f"{sorted(unused)}. A launcher can give these with `nodo execute -e` and "
                 "they will change nothing.",
             )
 
@@ -129,8 +131,8 @@ class TestEnvironment(unittest.TestCase):
             self.assertFalse(
                 undeclared,
                 f"{service}: read by entrypoint.sh and not declared in service.json: "
-                f"{sorted(undeclared)}. The node will refuse to pass these, so they are "
-                "stuck at their defaults.",
+                f"{sorted(undeclared)}. The manifest is what an operator reads, and it "
+                "does not show these knobs.",
             )
 
 
