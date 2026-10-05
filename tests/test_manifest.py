@@ -185,6 +185,17 @@ class TestSlots(unittest.TestCase):
             self.assertEqual(slots[0]["transport"], "tcp")
 
 
+class TestTimezonePackage(unittest.TestCase):
+    def test_dockerfiles_pin_tzdata(self):
+        # checks.sh requires a file in /usr/share/zoneinfo. libc6 only
+        # Recommends tzdata, and the images install with --no-install-recommends.
+        for service in SERVICES:
+            self.assertIn(
+                "tzdata=", dockerfile(service),
+                f"{service}: Dockerfile does not pin tzdata",
+            )
+
+
 class TestNetwork(unittest.TestCase):
     def test_all_three_declare_open_egress(self):
         # If this ever narrows it should be a deliberate change with a failing

@@ -86,6 +86,19 @@ class TestBrowserValues(unittest.TestCase):
         code, out = run('need_one_of P "medium\nx = y" ultrafast medium')
         self.assertEqual(code, 1, out)
 
+    def test_timezone_uses_the_zoneinfo_directory(self):
+        # The happy path above uses the host zoneinfo. A guest without tzdata
+        # would still pass that test. Point ZONEINFO at an empty dir so UTC
+        # must exist as a file in the image, not on this Mac.
+        with tempfile.TemporaryDirectory() as zoneinfo:
+            code, out = self.check(TIMEZONE="UTC", ZONEINFO=zoneinfo)
+            self.assertEqual(code, 1, out)
+            self.assertIn("FATAL:", out)
+            with open(os.path.join(zoneinfo, "UTC"), "wb"):
+                pass
+            code, out = self.check(TIMEZONE="UTC", ZONEINFO=zoneinfo)
+            self.assertEqual(code, 0, out)
+
 
 class TestDns(unittest.TestCase):
     def setUp(self):
