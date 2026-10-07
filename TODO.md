@@ -86,8 +86,8 @@ What is left is the part that needs a node, rather than an image.
 1. **`nodo pack`, on all three.** The context bug above was found by running the
    packer and is fixed; the packs have not yet been carried through to a service id.
    `nodo pack` uses the packer service of the node by default. `nodo pack --local`
-   (or `packer.local: true`) builds with the local BuildKit. On an `x86_64` node, set
-   `architecture` to `linux/amd64` first; see the README.
+   (or `packer.local: true`) builds with the local BuildKit. On an `x86_64` node, pack
+   the `amd64/` root (`nodo pack vnc/amd64`); see the README.
 2. **Launch, and `nodo tunnel <instance> 5900 --listen 5900`.** Everything above was
    reached over a container network standing in for the tunnel; the byte path is the
    same, the DNAT is not. Whether `Xvnc -localhost no` is reachable through the node's

@@ -135,22 +135,42 @@ going to.
 ## Pack
 
 ```bash
-nodo pack vnc
-nodo pack waypipe
-nodo pack stream
+nodo pack vnc/amd64        # or vnc/arm64
+nodo pack waypipe/amd64    # or waypipe/arm64
+nodo pack stream/amd64     # or stream/arm64
 ```
 
 Packing does not need a display or uinput. Those are run-time limits. See
 [Which to run](#which-to-run) and each `NODE-REQUIREMENTS.md`.
 
-`architecture` is `linux/arm64` in all three. The packer builds for the
-architecture that `service.json` names, not for the host
-(`src/packers/zip_with_dockerfile.py` in nodo). A packer host of a different
-architecture needs a binfmt_misc handler, and a node of a different architecture
-runs the service under QEMU emulation, which is slow. So on an `x86_64` node,
-change `architecture` to `linux/amd64`. That is the only change: the Dockerfiles
-name no architecture, the base image digest is a multi-architecture index, and
-each pinned package exists at the same version for both.
+### Packing: one tree per architecture
+
+A Celaut service has one architecture. The packer builds for the architecture
+that `service.json` names, not for the host
+(`src/packers/zip_with_dockerfile.py` in nodo). Thus each service has one pack
+root for each architecture, as `celaut-basics/demo-service` does:
+
+```
+vnc/
+├── amd64/                  nodo pack vnc/amd64
+│   ├── .service/           Dockerfile, service.json, pack_config.json (linux/amd64)
+│   └── service -> ../service
+├── arm64/                  nodo pack vnc/arm64
+│   ├── .service/           the same files for linux/arm64
+│   └── service -> ../service
+├── service/                entrypoint.sh, checks.sh
+└── NODE-REQUIREMENTS.md
+```
+
+`waypipe/` and `stream/` have the same shape. Pack the root of the node's own
+architecture: a packer host of a different architecture needs a binfmt_misc
+handler, and a node of a different architecture runs the service under QEMU
+emulation, which is slow. The two roots differ only in `architecture`. The
+Dockerfiles are the same file: they name no architecture, the base image digest
+is a multi-architecture index, and each pinned package exists at the same
+version for both. `nodo pack` copies the pack root and follows the symlink. A
+plain `docker build` does not follow it: for a local build, copy the root first
+(`cp -RL vnc/amd64 /tmp/vnc-amd64`). `tests/test_manifest.py` checks the layout.
 
 `nodo pack` uses the packer service of the node. To build with the local BuildKit
 for one run, add `--local`. The packer copies only the `service/` directory of
@@ -200,7 +220,7 @@ before anyone noticed GameStream negotiates the bitrate from the client side.
 
 Two of these are about the packer rather than the manifest, and they are there
 because `nodo pack` and `docker build` disagreed: the packer builds with the context
-set to `.service/` and rewrites only the `COPY` origins that begin with a dot, so
+set to `<arch>/.service/` and rewrites only the `COPY` origins that begin with a dot, so
 `COPY service /service` meant two different directories depending on who was
 building — and the one that did not exist was the packer's. It failed after the
 entire apt layer had run, on `chmod: cannot access`. The other asserts that some
