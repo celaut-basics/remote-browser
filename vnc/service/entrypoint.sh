@@ -17,6 +17,11 @@ WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
+
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
 
 STATE=/var/lib/browser
 LOGS=/var/log/browser
@@ -26,6 +31,9 @@ export DISPLAY=:0
 export TZ="$TIMEZONE"
 mkdir -p "$STATE" "$LOGS"
 chown -R browser:browser "$STATE" "$LOGS"
+
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # --- The password, and its ceiling --------------------------------------------
 #
@@ -43,7 +51,7 @@ chown -R browser:browser "$STATE" "$LOGS"
 # the instance token, rather than by publishing 5900. See NODE-REQUIREMENTS.md.
 [ -n "$VNC_PASSWORD" ] || fail \
   "VNC_PASSWORD is unset. Pass it at launch:
-     nodo execute remote-browser-vnc -e VNC_PASSWORD <something>
+     nodo execute -e VNC_PASSWORD <something> remote-browser-vnc
    Note that RFB truncates it to 8 bytes whatever you choose."
 
 if [ "${#VNC_PASSWORD}" -gt 8 ]; then
@@ -99,6 +107,12 @@ log "display :0 is up"
 # /dev/dri and software rasterisation is what is left.
 #
 # There is no audio in this architecture. RFB carries none.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   env DISPLAY=:0 TZ="$TZ" \
@@ -107,7 +121,6 @@ runuser -u browser -- \
     --no-first-run \
     --no-default-browser-check \
     --disable-gpu \
-    --disable-dev-shm-usage \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
     --lang="${LOCALE}" \

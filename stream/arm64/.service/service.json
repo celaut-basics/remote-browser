@@ -76,7 +76,8 @@
         "ADMIN_USER",
         "ADMIN_PASS",
         "LOCALE",
-        "TIMEZONE"
+        "TIMEZONE",
+        "DNS_SERVERS"
     ],
     "network": [
         {

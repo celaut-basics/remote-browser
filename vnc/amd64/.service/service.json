@@ -1,6 +1,6 @@
 {
-    "tag": "remote-browser-waypipe",
-    "architecture": "linux/arm64",
+    "tag": "remote-browser-vnc",
+    "architecture": "linux/amd64",
     "init": {
         "entry_path": [
             "service",
@@ -9,19 +9,21 @@
     },
     "api": [
         {
-            "port": 8081,
+            "port": 5900,
             "transport": "tcp",
             "protocol": [
-                "waypipe"
+                "rfb"
             ]
         }
     ],
     "envs": [
+        "VNC_PASSWORD",
         "START_URL",
         "WIDTH",
         "HEIGHT",
         "LOCALE",
-        "TIMEZONE"
+        "TIMEZONE",
+        "DNS_SERVERS"
     ],
     "network": [
         {

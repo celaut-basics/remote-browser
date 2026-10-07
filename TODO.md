@@ -85,21 +85,28 @@ What is left is the part that needs a node, rather than an image.
 
 1. **`nodo pack`, on all three.** The context bug above was found by running the
    packer and is fixed; the packs have not yet been carried through to a service id.
-   Note that `nodo pack` no longer builds locally by default — it wants a
-   packer-service id in `core_services.packer`, or `packer.local: true` to use its own
-   isolated toolchain. The local path also shells out to `unzip` without depending on
-   it, which is worth an issue upstream.
+   `nodo pack` uses the packer service of the node by default. `nodo pack --local`
+   (or `packer.local: true`) builds with the local BuildKit. On an `x86_64` node, pack
+   the `amd64/` root (`nodo pack vnc/amd64`); see the README.
 2. **Launch, and `nodo tunnel <instance> 5900 --listen 5900`.** Everything above was
    reached over a container network standing in for the tunnel; the byte path is the
    same, the DNAT is not. Whether `Xvnc -localhost no` is reachable through the node's
    DNAT specifically is still open.
-3. **Whether a node leaves enough of the port layout intact for the eight-tunnel
+3. **The entrypoint changes of 2026-10-05, in a real guest.** Read against the nodo
+   source and run in Docker only:
+   - the `waypipe/` slot accepts the `nodo tunnel` connection, which comes from the
+     node's bridge address, and refuses a connection from another guest. socat now
+     restarts if a reject exits it; the source IP is still assumed, not bound;
+   - default `TIMEZONE=UTC` finds `/usr/share/zoneinfo/UTC` after the `tzdata` pin;
+   - name resolution works with the `resolv.conf` of the image, and with
+     `DNS_SERVERS`.
+4. **Whether a node leaves enough of the port layout intact for the eight-tunnel
    recipe** in `stream/NODE-REQUIREMENTS.md`.
-4. **A real Moonlight against `stream/`.** Capture, encoder and pairing API are
+5. **A real Moonlight against `stream/`.** Capture, encoder and pairing API are
    confirmed; an actual paired session, and the audio the null sink is supposed to
    carry, are not. There is no Moonlight for Linux `arm64`, which is why this one
    needs a host.
-5. **waypipe's worst case.** Video and CSS animation were not measured, only idle and
+6. **waypipe's worst case.** Video and CSS animation were not measured, only idle and
    scrolling text.
 
 ## Build

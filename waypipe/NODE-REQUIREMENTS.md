@@ -29,6 +29,12 @@ waypipe --socket /tmp/wp-client.sock client &
 socat UNIX-CONNECT:/tmp/wp-client.sock TCP:127.0.0.1:8081
 ```
 
+Use `nodo tunnel`. waypipe has no authentication, so the slot accepts a
+connection only from the node's address on the bridge. That is the address from
+which the node opens each tunnel connection. A connection to a published port
+keeps the address of the client through the node's DNAT, so the service refuses
+it. Another guest on the same node is refused too.
+
 The third command is the direction reversal. `waypipe client` listens where the
 compositor is and `waypipe server` dials from where the application is — but the
 guest cannot dial the host, so the host dials in and `socat` bridges the two. The

@@ -14,6 +14,11 @@ WIDTH="${WIDTH:-1920}"
 HEIGHT="${HEIGHT:-1080}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
+
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
 
 SLOT=8081
 CHANNEL=/run/waypipe/chan.sock
@@ -31,6 +36,9 @@ chmod 700 "$XDG_RUNTIME_DIR"
 rm -f "$CHANNEL"
 chown -R browser:browser "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_DIR"
 
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
+
 # --- The direction reversal ---------------------------------------------------
 #
 # waypipe's roles are fixed the wrong way round for a celaut slot. `waypipe
@@ -46,18 +54,46 @@ chown -R browser:browser "$STATE" "$LOGS" "$(dirname "$CHANNEL")" "$XDG_RUNTIME_
 # The slot therefore listens from boot, and $CHANNEL appears at exactly the moment
 # a session begins -- which is the moment, and the only moment, at which
 # `waypipe server` can successfully dial it.
+#
+# --- Who can connect ------------------------------------------------------------
+#
+# waypipe has no authentication. The first connection gets the session: the
+# pixels of the browser, and its keyboard and mouse. vnc/ has a password and
+# stream/ has pairing. This slot has neither. Also, any other guest on the node
+# that declares the `*` network can open a connection to this guest: nodo
+# writes the `*` egress rule with no destination limit.
+#
+# So socat accepts connections from the node only. The node opens each
+# `nodo tunnel` connection from its own address on the bridge, and that address
+# is the default gateway of this guest (see node_address in checks.sh). That
+# source IP is the usual connected-route choice. rpc_tunnel.py does not bind()
+# it, so a node run still has to confirm it. A connection to a published port
+# keeps the address of the client through the node's DNAT, so socat refuses it
+# too. Use `nodo tunnel`.
+#
+# range= closes a connection from any other address. Without fork, some socat
+# versions then exit. The loop starts socat again until a valid client creates
+# $CHANNEL, so a probe from another `*` guest does not kill the instance. One
+# session per instance: the loop stops when the channel exists.
+#
+# If this guest has no default gateway, the instance stops. A slot that any
+# address can use is not a safe fallback.
+NODE="$(node_address)" || fail "no default gateway in /proc/net/route; cannot limit slot ${SLOT} to the node"
+log "slot ${SLOT} accepts connections from the node (${NODE}) only"
 log "listening on slot ${SLOT}; the session begins when something connects"
-runuser -u browser -- \
-  socat "TCP-LISTEN:${SLOT},reuseaddr" "UNIX-LISTEN:${CHANNEL}" \
-  >"$LOGS/socat.log" 2>&1 &
-SOCAT_PID=$!
-
-# Poll rather than sleep a fixed amount: the wait is for an event (the host
-# connecting), not for a duration, and it has no deadline -- an instance nobody
-# has connected to yet is not a failed instance.
-log "waiting for a client"
+: >"$LOGS/socat.log"
+SOCAT_PID=""
 while [ ! -S "$CHANNEL" ]; do
-  kill -0 "$SOCAT_PID" 2>/dev/null || fail "socat exited before any client connected (see $LOGS/socat.log)"
+  if [ -n "$SOCAT_PID" ]; then
+    kill -0 "$SOCAT_PID" 2>/dev/null || SOCAT_PID=""
+  fi
+  if [ -z "$SOCAT_PID" ]; then
+    runuser -u browser -- \
+      socat "TCP-LISTEN:${SLOT},reuseaddr,range=${NODE}/32" "UNIX-LISTEN:${CHANNEL}" \
+      >>"$LOGS/socat.log" 2>&1 &
+    SOCAT_PID=$!
+    log "socat listening on ${SLOT} (pid ${SOCAT_PID})"
+  fi
   sleep 0.2
 done
 log "client connected; channel is up at ${CHANNEL}"
@@ -73,6 +109,12 @@ log "client connected; channel is up at ${CHANNEL}"
 #
 # There is no audio in this architecture. Wayland carries none, and waypipe
 # carries Wayland; a sound path would be a second channel and it is not here.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL} (${WIDTH}x${HEIGHT})"
 exec runuser -u browser -- \
   env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" TZ="$TZ" \
@@ -83,14 +125,14 @@ exec runuser -u browser -- \
       --no-default-browser-check \
       --ozone-platform=wayland \
       --disable-gpu \
-      --disable-dev-shm-usage \
       --window-size="${WIDTH},${HEIGHT}" \
       --lang="${LOCALE}" \
       --user-data-dir="${STATE}/profile" \
       --disk-cache-dir="${STATE}/cache" \
       "${START_URL}"
 
-# `exec`, so waypipe is PID 1 from here: when the session ends, the instance ends.
+# `exec`, so runuser, with waypipe under it, is PID 1 from here: when the
+# session ends, the instance ends.
 # One session per instance is deliberate. waypipe has a `recon` subcommand for
 # reattaching a server to a new channel, which would let the browser outlive a
 # disconnection, and wiring it up is in TODO.md rather than guessed at here.

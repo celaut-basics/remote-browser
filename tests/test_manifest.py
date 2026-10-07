@@ -9,8 +9,10 @@ the two. They drift in both directions and both are silent.
   node accepts it, and it changes nothing. `BITRATE_KBPS` was exactly this,
   declared for a while before anyone noticed GameStream negotiates the bitrate
   from the client side.
-- Read and never declared — the entrypoint has a knob the node will refuse to
-  pass, so it is stuck at its default with no way to say otherwise.
+- Read and never declared — the entrypoint has a knob that the manifest does not
+  show. nodo does not compare `-e` names with `envs` (src/utils/guest_env.py in
+  nodo), so the value gets through, but nobody who reads the manifest knows that
+  the knob exists.
 - A slot declared on a port nothing binds — the node opens a firewall hole and
   publishes an address where nobody answers.
 
@@ -26,14 +28,17 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVICES = ("stream", "waypipe", "vnc")
+ARCHES = ("amd64", "arm64")
 
 # `NAME="${NAME:-default}"` or `NAME="${NAME}"` -- how an entrypoint takes a value
 # from the environment. A mention inside a message is not a read.
 _READ = re.compile(r'^\s*([A-Z_][A-Z0-9_]*)="\$\{\1(?::-[^}]*)?\}"', re.MULTILINE)
 
 
-def manifest(service):
-    with open(os.path.join(ROOT, service, ".service", "service.json")) as handle:
+def manifest(service, arch="amd64"):
+    # The two pack roots differ only in `architecture` (TestPerArchitectureLayout),
+    # so the other tests read the amd64 one.
+    with open(os.path.join(ROOT, service, arch, ".service", "service.json")) as handle:
         return json.load(handle)
 
 
@@ -42,8 +47,8 @@ def entrypoint(service):
         return handle.read()
 
 
-def dockerfile(service):
-    with open(os.path.join(ROOT, service, ".service", "Dockerfile")) as handle:
+def dockerfile(service, arch="amd64"):
+    with open(os.path.join(ROOT, service, arch, ".service", "Dockerfile")) as handle:
         return handle.read()
 
 
@@ -54,9 +59,10 @@ _COPY = re.compile(r"^\s*COPY\s+((?:--[^\s]+\s+)*)([^\s]+)\s+([^\s]+)\s*$", re.M
 class TestLayout(unittest.TestCase):
     def test_each_service_is_complete(self):
         for service in SERVICES:
-            for relative in (".service/service.json", ".service/pack_config.json",
-                             ".service/Dockerfile", "service/entrypoint.sh",
-                             "NODE-REQUIREMENTS.md"):
+            for relative in ("amd64/.service/service.json", "amd64/.service/pack_config.json",
+                             "amd64/.service/Dockerfile", "arm64/.service/service.json",
+                             "arm64/.service/pack_config.json", "arm64/.service/Dockerfile",
+                             "service/entrypoint.sh", "NODE-REQUIREMENTS.md"):
                 path = os.path.join(ROOT, service, relative)
                 self.assertTrue(os.path.isfile(path), f"{service}: missing {relative}")
 
@@ -68,6 +74,55 @@ class TestLayout(unittest.TestCase):
                 f"{service}: init.entry_path {entry} is not a file in the tree. It packs "
                 "fine and the instance can never start.",
             )
+
+
+class TestPerArchitectureLayout(unittest.TestCase):
+    """One pack root per architecture, as celaut-basics/demo-service has.
+
+    `nodo pack <service>/<arch>` reads only `<service>/<arch>/.service/` and copies
+    the root with its symlinks followed. So each root holds real `.service/` files
+    and reaches the shared source through `service -> ../service`.
+    """
+
+    def test_no_service_dir_at_the_old_place(self):
+        for service in SERVICES:
+            self.assertFalse(os.path.exists(os.path.join(ROOT, service, ".service")), service)
+
+    def test_each_root_declares_its_own_architecture(self):
+        for service in SERVICES:
+            for arch in ARCHES:
+                self.assertEqual(manifest(service, arch)["architecture"], f"linux/{arch}",
+                                 f"{service}/{arch}")
+
+    def test_the_service_files_are_real_files(self):
+        for service in SERVICES:
+            for arch in ARCHES:
+                for name in ("Dockerfile", "service.json", "pack_config.json"):
+                    path = os.path.join(ROOT, service, arch, ".service", name)
+                    self.assertFalse(os.path.islink(path), f"{service}/{arch}: {name}")
+
+    def test_the_shared_source_is_a_link_in_each_root(self):
+        for service in SERVICES:
+            for arch in ARCHES:
+                link = os.path.join(ROOT, service, arch, "service")
+                self.assertTrue(os.path.islink(link), f"{service}/{arch}")
+                self.assertEqual(os.readlink(link), "../service", f"{service}/{arch}")
+                self.assertTrue(os.path.isfile(os.path.join(link, "entrypoint.sh")))
+
+    def test_the_two_roots_differ_only_in_architecture(self):
+        for service in SERVICES:
+            specs = {}
+            for arch in ARCHES:
+                spec = manifest(service, arch)
+                spec.pop("architecture")
+                specs[arch] = spec
+            self.assertEqual(specs["amd64"], specs["arm64"], service)
+            self.assertEqual(dockerfile(service, "amd64"), dockerfile(service, "arm64"), service)
+            configs = []
+            for arch in ARCHES:
+                with open(os.path.join(ROOT, service, arch, ".service", "pack_config.json")) as handle:
+                    configs.append(json.load(handle))
+            self.assertEqual(configs[0], configs[1], service)
 
 
 class TestPackerContext(unittest.TestCase):
@@ -119,7 +174,7 @@ class TestEnvironment(unittest.TestCase):
             self.assertFalse(
                 unused,
                 f"{service}: declared in service.json and never read by entrypoint.sh: "
-                f"{sorted(unused)}. The node will accept these at `nodo execute -e` and "
+                f"{sorted(unused)}. A launcher can give these with `nodo execute -e` and "
                 "they will change nothing.",
             )
 
@@ -129,8 +184,8 @@ class TestEnvironment(unittest.TestCase):
             self.assertFalse(
                 undeclared,
                 f"{service}: read by entrypoint.sh and not declared in service.json: "
-                f"{sorted(undeclared)}. The node will refuse to pass these, so they are "
-                "stuck at their defaults.",
+                f"{sorted(undeclared)}. The manifest is what an operator reads, and it "
+                "does not show these knobs.",
             )
 
 
@@ -181,6 +236,17 @@ class TestSlots(unittest.TestCase):
             self.assertEqual(len(slots), 1, f"{service}: expected exactly one slot")
             self.assertIn(protocol, slots[0]["protocol"])
             self.assertEqual(slots[0]["transport"], "tcp")
+
+
+class TestTimezonePackage(unittest.TestCase):
+    def test_dockerfiles_pin_tzdata(self):
+        # checks.sh requires a file in /usr/share/zoneinfo. libc6 only
+        # Recommends tzdata, and the images install with --no-install-recommends.
+        for service in SERVICES:
+            self.assertIn(
+                "tzdata=", dockerfile(service),
+                f"{service}: Dockerfile does not pin tzdata",
+            )
 
 
 class TestNetwork(unittest.TestCase):

@@ -20,10 +20,19 @@ ADMIN_USER="${ADMIN_USER:-}"
 ADMIN_PASS="${ADMIN_PASS:-}"
 LOCALE="${LOCALE:-en-US}"
 TIMEZONE="${TIMEZONE:-UTC}"
+DNS_SERVERS="${DNS_SERVERS:-}"
+
+# shellcheck source=checks.sh
+. /service/checks.sh
+check_browser_values
+# SW_PRESET goes into sunshine.conf. A value with a line break would add a
+# configuration key of its own, so only the x264 preset names are accepted.
+need_one_of SW_PRESET "$SW_PRESET" \
+  ultrafast superfast veryfast faster fast medium slow slower veryslow placebo
 
 [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ] || fail \
   "ADMIN_USER and ADMIN_PASS are unset. Pass them at launch:
-     nodo execute remote-browser -e ADMIN_USER nodo -e ADMIN_PASS <something>
+     nodo execute -e ADMIN_USER admin -e ADMIN_PASS <something> remote-browser
    Refusing rather than generating one: an unset password would leave Sunshine's
    configuration API open to anything that can reach port 47990 -- which on this
    node is every other guest on the bridge -- and a generated one would have to be
@@ -35,6 +44,9 @@ STATE=/var/lib/browser
 LOGS=/var/log/browser
 mkdir -p "$STATE" "$LOGS" /run/pulse /etc/sunshine
 chown -R browser:browser "$STATE" /run/pulse
+
+set_dns "$DNS_SERVERS"
+log "dns: $(awk '/^nameserver /{printf "%s ", $2}' /etc/resolv.conf)"
 
 # /etc/sunshine is created here because nothing else creates it: the .deb ships
 # /usr/bin/sunshine, a udev rule and a systemd user unit, and no /etc directory at
@@ -184,6 +196,12 @@ SUNSHINE_PID=$!
 # runuser drops to an unprivileged user so Chromium keeps its own sandbox. See the
 # Dockerfile: the guest kernel has the namespaces and seccomp it needs, and this is
 # the one service on the network whose job is to open pages nobody vetted.
+#
+# /dev/shm: no flag here. The Debian wrapper /usr/bin/chromium reads
+# /etc/chromium.d/dev-shm and adds --disable-dev-shm-usage when /dev/shm has less
+# than 3.8 GB free. The nodo guest mounts /dev/shm at half of the guest memory.
+# at_init is 2 GiB, so that disable path is the one that runs. A larger mem_limit
+# can use /dev/shm if half of it is above the wrapper threshold.
 log "starting chromium at ${START_URL}"
 runuser -u browser -- \
   chromium \
@@ -191,7 +209,6 @@ runuser -u browser -- \
     --no-first-run \
     --no-default-browser-check \
     --disable-gpu \
-    --disable-dev-shm-usage \
     --window-size="${WIDTH},${HEIGHT}" \
     --window-position=0,0 \
     --lang="${LOCALE}" \
