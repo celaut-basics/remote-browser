@@ -9,8 +9,8 @@
 #
 # No line below names an architecture. The base digest is a multi-arch index, every
 # Debian pin exists at the same version for linux/arm64 and linux/amd64, and the
-# Sunshine package is chosen by the architecture of the image being built. To pack
-# for amd64, change `architecture` in service.json and nothing else.
+# Sunshine package is chosen by the architecture of the image being built. The pack roots
+# amd64/ and arm64/ hold this same file. Only `architecture` in service.json differs.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # apt reads a frozen snapshot of the Debian archive, not the live mirror. The live
