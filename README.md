@@ -268,9 +268,13 @@ What is confirmed, in one line each:
   x264 comes up, and the `POST /api/pin` shape is now read off the pinned build
   instead of its documentation. Two of its `sunshine.conf` keys did not exist.
 
-What still needs a node rather than an image: `nodo pack` through to a service id,
-`nodo tunnel` and the node's DNAT, the eight-tunnel port recipe, and a real
-Moonlight session. Those are the first six items of [`TODO.md`](TODO.md).
+On 2026-10-06, nodo `dev` `f14a1447` packed all six pack roots, and `vnc` and
+`stream` (amd64) started and answered on CH/KVM. On that node `waypipe` does not
+start: the packer stores `/usr/bin/awk` as a link to a path of the packing host
+(nodo [#485](https://github.com/celaut-project/nodo/issues/485), fix in nodo PR
+[#499](https://github.com/celaut-project/nodo/pull/499)). With that fix, the
+waypipe channel came up through `nodo tunnel`. What still needs a node: the
+eight-tunnel port recipe and a real Moonlight session (see [`TODO.md`](TODO.md)).
 
 apt reads `snapshot.debian.org` at `DEBIAN_SNAPSHOT` (`20261004T000000Z`), not the
 live mirror. The live mirror keeps one Chromium version, and it removed 152 and 153
